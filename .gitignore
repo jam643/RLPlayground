@@ -1,0 +1,32 @@
+# Python
+*.pyc
+__pycache__/
+
+# Virtual Environment
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Compiled files
+*.class
+*.jar
+*.war
+*.ear
+
+# Dependency directories
+node_modules/
+bower_components/
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+.ipynb_checkpoints
