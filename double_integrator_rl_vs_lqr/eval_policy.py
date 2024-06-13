@@ -9,7 +9,7 @@ from matplotlib import cm
 from scipy.linalg import solve_continuous_are
 import os
 
-model_name = "PPO_double_integrator"
+model_name = "PPO_double_integrator_10mps"
 model_steps = "150000"
 
 vec_env = make_vec_env(

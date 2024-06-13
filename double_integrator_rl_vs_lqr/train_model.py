@@ -1,4 +1,4 @@
-from double_integrator_env import DoubleIntegratorEnv, State
+from double_integrator_env import DoubleIntegratorEnv, State, RewWeights
 
 from stable_baselines3 import PPO, A2C, DQN, SAC
 from stable_baselines3.common.env_util import make_vec_env
@@ -9,7 +9,7 @@ import time
 import os
 import numpy as np
 
-exp_name = f"PPO_double_integrator"
+exp_name = f"PPO_double_integrator_10mps"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "models", exp_name)
@@ -21,10 +21,11 @@ os.makedirs(image_dir, exist_ok=True)
 os.makedirs(logdir, exist_ok=True)
 
 # Instantiate the env
+params = DoubleIntegratorEnv.Params(desired_speed=0, reward_weights=RewWeights())
 vec_env = make_vec_env(
     DoubleIntegratorEnv,
     n_envs=1,
-    env_kwargs={"render_mode": "none"},
+    env_kwargs={"render_mode": "none", "params": params},
 )
 
 device = torch.device("cpu")
@@ -62,8 +63,6 @@ while iters < 15:
             obs, _, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
     env.render(file_name=f"{TIMESTEPS*iters}")
-
-    evaluate_policy(model, model.get_env(), n_eval_episodes=1, render=True)
 
 
 mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=100)
