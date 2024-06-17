@@ -1,4 +1,5 @@
-from acc_env import ACCEnv
+from acc_env import ACCEnv, RenderMode
+from eval_policy import eval_policy
 
 from stable_baselines3 import PPO, A2C, DQN, SAC
 from stable_baselines3.common.env_util import make_vec_env
@@ -9,7 +10,7 @@ import time
 import os
 import numpy as np
 
-exp_name = f"PPO_acc"
+exp_name = f"PPO_no_lead_run3"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "models", exp_name)
@@ -38,9 +39,9 @@ model = PPO(
     tensorboard_log=logdir,
 )
 
-TIMESTEPS = 10000
+TIMESTEPS = 50000
 iters = 0
-while iters < 20:
+while iters < 6:
     iters += 1
     model.learn(
         total_timesteps=TIMESTEPS,
@@ -49,6 +50,9 @@ while iters < 20:
         progress_bar=True,
     )
     model.save(f"{models_dir}/{TIMESTEPS*iters}")
+    image_iter_dir = os.path.join(image_dir, f"{TIMESTEPS*iters}")
+    os.makedirs(image_iter_dir, exist_ok=True)
+    eval_policy(model, RenderMode.Save, image_iter_dir, 0)
 
 
 mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=100)

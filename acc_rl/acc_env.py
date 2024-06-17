@@ -14,6 +14,12 @@ from abc import ABC, abstractmethod
 from stable_baselines3.common.env_checker import check_env
 
 
+class RenderMode(Enum):
+    Null = 0
+    Human = 1
+    Save = 2
+
+
 @dataclass
 class State:
     station: float
@@ -92,46 +98,42 @@ class Observation:
 class Reward:
     @dataclass
     class Params:
-        speed_weight: float = 0.005
-        accel_weight: float = 0.3
-        jerk_weight: float = 0.1
+        speed_weight: float = 0.05
+        accel_weight: float = 0.1
+        jerk_weight: float = 0.02
         clearance_weight: float = 10.0
-        comfort_accel_val: float = 0.5
         collision_weight: float = 50.0
         clearance_buffer_m: float = 2.0
-        desired_speed: float = 15.0
+        max_speed: float = 15.0
 
     def __init__(self, params: Params):
         self.params = params
 
     def compute_reward(self, obs: Observation, action: Action):
-        comfort_accel_cost = 0.0
-        if obs.ego_acceleration > self.params.comfort_accel_val:
-            comfort_accel_cost = (
-                self.params.accel_weight
-                * (obs.ego_acceleration - self.params.comfort_accel_val) ** 2
-            )
-        elif obs.ego_acceleration < -self.params.comfort_accel_val:
-            comfort_accel_cost = (
-                self.params.accel_weight
-                * (obs.ego_acceleration + self.params.comfort_accel_val) ** 2
-            )
+        comfort_accel_cost = self.params.accel_weight * obs.ego_acceleration**2
 
         comfort_cost = comfort_accel_cost + self.params.jerk_weight * action.jerk**2
 
-        tracking_cost = (
-            self.params.speed_weight * (obs.ego_speed - self.params.desired_speed) ** 2
+        tracking_cost = self.params.speed_weight * np.abs(
+            obs.ego_speed - self.params.max_speed
         )
 
         safety_cost = 0
         rel_speed = obs.lead_speed - obs.ego_speed
-        if obs.relative_station <= 0.0 and rel_speed <= 0:
+        if (
+            obs.relative_station <= 0.0
+            and rel_speed <= 0
+            and obs.relative_station > -10.0
+        ):
             safety_cost = (
                 self.params.collision_weight * (obs.lead_speed - obs.ego_speed) ** 2
             )
 
         clearance_cost = 0
-        if obs.relative_station <= self.params.clearance_buffer_m:
+        if (
+            obs.relative_station <= self.params.clearance_buffer_m
+            and obs.relative_station > -10.0
+        ):
             clearance_cost = (
                 self.params.clearance_weight
                 * (obs.relative_station - self.params.clearance_buffer_m) ** 2
@@ -190,21 +192,17 @@ class LeadCarModel:
 class ACCEnv(gym.Env):
     """Custom Environment that follows gym interface."""
 
-    metadata = {"render_modes": ["human", "none", "save"]}
-
     @dataclass
     class Params:
         dt: float = 0.5
-        max_time: float = 30.0
+        max_time: float = 60.0
         max_jerk: float = 20.0
         max_accel: float = 2.0
         min_accel: float = -7.0
-        max_speed: float = 15.0
 
-    def __init__(self, render_mode="none", save_dir=None, params=Params()):
+    def __init__(self, render_mode=RenderMode.Null, params=Params()):
         super().__init__()
         self.render_mode = render_mode
-        self.save_dir = save_dir
         self.params = params
 
         self.action_space = spaces.Box(
@@ -221,7 +219,7 @@ class ACCEnv(gym.Env):
         self.lead_car_model = None
         self.reward_class = Reward(params=Reward.Params())
 
-        if self.render_mode == "human" or self.render_mode == "save":
+        if self.render_mode == RenderMode.Human or self.render_mode == RenderMode.Save:
             self._init_fig()
 
     def _init_fig(self):
@@ -320,7 +318,7 @@ class ACCEnv(gym.Env):
         truncated, terminated = False, False
         if self.time >= self.params.max_time:
             truncated = True
-        if observation.relative_station <= 0.0:
+        if observation.relative_station <= 0.0 and observation.relative_station > -10.0:
             terminated = True
         self.time += self.params.dt
 
@@ -342,22 +340,26 @@ class ACCEnv(gym.Env):
         else:
             self.state = State(
                 station=0.0,
-                speed=np.random.uniform(0.0, self.params.max_speed),
+                speed=np.random.uniform(0.0, self.reward_class.params.max_speed + 5.0),
                 acceleration=0.0,
             )
 
         if lead_init_state is None:
-            options = {"far": 0.05, "near": 0.95}
+            options = {"behind": 0.05, "infront": 0.95}
             choice = np.random.choice(list(options.keys()), p=list(options.values()))
-            if choice == "far":
+            if choice == "behind":
                 lead_init_state = LeadState(
-                    station=1e6,
+                    station=-15.0,
                     speed=0.0,
                 )
             else:
+                # lead_init_state = LeadState(
+                #     station=np.random.uniform(10, 50),
+                #     speed=np.random.uniform(0.0, self.state.speed + 10.0),
+                # )
                 lead_init_state = LeadState(
-                    station=np.random.uniform(10, 50),
-                    speed=np.random.uniform(0.0, self.state.speed + 10.0),
+                    station=-15.0,
+                    speed=0.0,
                 )
 
         if lead_policy is None:
@@ -401,10 +403,10 @@ class ACCEnv(gym.Env):
     def render(self, file_name=None, title=None):
         if title:
             plt.suptitle(title)
-        if self.render_mode == "save" and self.time >= self.params.max_time:
+        if self.render_mode == RenderMode.Save:
             self._render()
-            plt.savefig(f"{self.save_dir}/{file_name}.png")
-        elif self.render_mode == "human":
+            plt.savefig(f"{file_name}.png")
+        elif self.render_mode == RenderMode.Human:
             self._render()
             plt.pause(self.params.dt / 5)
 
@@ -413,7 +415,7 @@ class ACCEnv(gym.Env):
 
 
 if __name__ == "__main__":
-    env = ACCEnv(render_mode="human")
+    env = ACCEnv(render_mode=RenderMode.Human)
     check_env(env, warn=True)
 
     obs, _ = env.reset()
