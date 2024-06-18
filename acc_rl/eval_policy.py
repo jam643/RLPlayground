@@ -1,7 +1,16 @@
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3 import PPO, A2C, DQN, SAC
-from acc_env import ACCEnv, State, LeadState, DecelPolicy, ConstSpeedPolicy, RenderMode
+from acc_env import (
+    ACCEnv,
+    State,
+    LeadState,
+    DecelLeadModel,
+    ConstSpeedLeadModel,
+    RenderMode,
+    LeadCarModel,
+    NoLeadModel,
+)
 from matplotlib import pyplot as plt
 import torch
 import numpy as np
@@ -11,17 +20,21 @@ import os
 
 
 def eval_policy(
-    model, render_mode, save_dir_name: str = "", num_rand_envs: int = np.inf
+    model,
+    env: ACCEnv,
+    render_mode: RenderMode,
+    save_dir_name: str = "",
+    num_rand_envs: int = int(1e6),
+    desired_speed: float = 15,
 ):
 
     # Accel from init speed on open road
     init_speeds = np.linspace(0, 15, 4)
     for init_speed in init_speeds:
-        env = ACCEnv(render_mode=render_mode)
         obs, _ = env.reset(
             ego_init_state=State(station=0, speed=init_speed, acceleration=0),
-            lead_init_state=LeadState(station=-15.0, speed=0),
-            lead_policy=ConstSpeedPolicy(),
+            lead_car_model=NoLeadModel(),
+            desired_speed=desired_speed,
         )
         done = False
         while not done and plt.get_fignums():
@@ -32,82 +45,87 @@ def eval_policy(
             done = terminated or truncated
         if render_mode == RenderMode.Save:
             env.render(
+                title=f"Accel from init speed: {init_speed}",
                 file_name=os.path.join(
                     save_dir_name, "init_speed_" + str(init_speed).replace(".", "_")
-                )
+                ),
             )
 
     # Sweep over decels
-    env = ACCEnv(render_mode=render_mode)
     decels = np.linspace(0, 9, 4)
     for decel in decels:
         obs, _ = env.reset(
             ego_init_state=State(station=0, speed=15, acceleration=0),
-            lead_init_state=LeadState(station=20, speed=15),
-            lead_policy=DecelPolicy(
-                DecelPolicy.Params(
+            lead_car_model=DecelLeadModel(
+                LeadCarModel.Params(dt=env.params.dt),
+                init_state=LeadState(station=20, speed=15),
+                decel_params=DecelLeadModel.DecelParams(
                     time_accel_start=5, accel=-decel, accel_duration=np.inf
-                )
+                ),
             ),
+            desired_speed=desired_speed,
         )
         done = False
         while not done and plt.get_fignums():
             action, _ = model.predict(obs, deterministic=True)
             obs, _, terminated, truncated, _ = env.step(action)
-            env.render(title=f"Const Decel: {decel}")
             if render_mode == RenderMode.Human:
-                env.render(title=f"Accel from init speed: {init_speed}")
+                env.render(title=f"Const Decel: {decel}")
             done = terminated or truncated
         if render_mode == RenderMode.Save:
             env.render(
+                title=f"Accel from init speed: {init_speed}",
                 file_name=os.path.join(
                     save_dir_name, "decel_" + str(decel).replace(".", "_")
-                )
+                ),
             )
 
     # Sweep over const speeds to see following distances
-    env = ACCEnv(render_mode=render_mode)
     speeds = np.linspace(5, 15, 3)
     for speed in speeds:
         obs, _ = env.reset(
             ego_init_state=State(station=0, speed=speed, acceleration=0),
-            lead_init_state=LeadState(station=2 * speed, speed=speed),
-            lead_policy=ConstSpeedPolicy(),
+            lead_car_model=ConstSpeedLeadModel(
+                params=LeadCarModel.Params(dt=env.params.dt),
+                init_state=LeadState(station=2 * speed, speed=speed),
+            ),
+            desired_speed=desired_speed,
         )
         done = False
         while not done and plt.get_fignums():
             action, _ = model.predict(obs, deterministic=True)
             obs, _, terminated, truncated, _ = env.step(action)
-            env.render(title=f"Const Speed: {speed}")
             if render_mode == RenderMode.Human:
-                env.render(title=f"Accel from init speed: {init_speed}")
+                env.render(title=f"Const Speed: {speed}")
             done = terminated or truncated
         if render_mode == RenderMode.Save:
             env.render(
+                title=f"Accel from init speed: {init_speed}",
                 file_name=os.path.join(
                     save_dir_name, "speed_" + str(speed).replace(".", "_")
-                )
+                ),
             )
 
     # Random envs
-    env = ACCEnv(render_mode=render_mode)
     for i in range(num_rand_envs):
         obs, _ = env.reset()
         done = False
         while not done and plt.get_fignums():
             action, _ = model.predict(obs, deterministic=True)
             obs, _, terminated, truncated, _ = env.step(action)
-            env.render(title="Random Env")
             if render_mode == RenderMode.Human:
-                env.render(title=f"Accel from init speed: {init_speed}")
+                env.render(title=f"Random Env")
             done = terminated or truncated
         if render_mode == RenderMode.Save:
-            env.render(file_name=os.path.join(save_dir_name, f"random_env_{i}"))
+            env.render(
+                title=f"Random Env",
+                file_name=os.path.join(save_dir_name, f"random_env_{i}"),
+            )
 
 
 if __name__ == "__main__":
-    model_name = "PPO_no_lead"
-    model_steps = "300000"
+    model_name = "PPO_acc_8192nsteps_256batch_run6"
+    model_steps = "700000"
 
     vec_env = make_vec_env(ACCEnv, n_envs=1)
 
@@ -123,4 +141,8 @@ if __name__ == "__main__":
         n_eval_episodes=100,
     )
 
-    eval_policy(model, render_mode=RenderMode.Human)
+    params = ACCEnv.Params()
+    params.max_time = 30
+    env = ACCEnv(render_mode=RenderMode.Human, params=params)
+
+    eval_policy(model, env, render_mode=RenderMode.Human, desired_speed=10)
