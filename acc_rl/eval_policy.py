@@ -124,7 +124,7 @@ def eval_policy(
 
 
 if __name__ == "__main__":
-    model_name = "PPO_acc_8192nsteps_256batch_run6"
+    model_name = "PPO_acc_8192nsteps_256batch_run3"
     model_steps = "700000"
 
     vec_env = make_vec_env(ACCEnv, n_envs=1)
@@ -145,4 +145,4 @@ if __name__ == "__main__":
     params.max_time = 30
     env = ACCEnv(render_mode=RenderMode.Human, params=params)
 
-    eval_policy(model, env, render_mode=RenderMode.Human, desired_speed=10)
+    eval_policy(model, env, render_mode=RenderMode.Human, desired_speed=15)

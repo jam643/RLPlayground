@@ -351,7 +351,8 @@ class ACCEnv(gym.Env):
         self.axs[self.jerk_plot_idx].set_ylim(
             -self.params.max_jerk, self.params.max_jerk
         )
-        self.axs[self.speed_plot_idx].set_ylim(0.0, self.params.speed_limit)
+        self.axs[self.speed_plot_idx].set_ylim(0.0, self.params.speed_limit + 1.0)
+        self.axs[self.headway_time_plot_idx].set_ylim(0.0, 10.0)
 
         plt.draw()
 
