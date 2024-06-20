@@ -11,7 +11,7 @@ import time
 import os
 import numpy as np
 
-exp_name = "PPO_acc_4092nsteps_128batch"
+exp_name = "PPO_acc_run2"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "models", exp_name)
@@ -41,8 +41,8 @@ model = PPO(
     verbose=1,
     device=device,
     tensorboard_log=logdir,
-    n_steps=4092,
-    batch_size=128,
+    n_steps=2046 * 8,
+    batch_size=64 * 4,
     # policy_kwargs=dict(
     #     net_arch=[dict(pi=[32, 32], vf=[32, 32])]  # Adjusted network architecture
     # ),
@@ -50,7 +50,7 @@ model = PPO(
 
 TIMESTEPS = 100000
 iters = 0
-while iters < 8:
+while iters < 10:
     iters += 1
     model.learn(
         total_timesteps=TIMESTEPS,
@@ -62,7 +62,7 @@ while iters < 8:
     image_iter_dir = os.path.join(image_dir, f"{TIMESTEPS*iters}")
     os.makedirs(image_iter_dir, exist_ok=True)
     params = ACCEnv.Params()
-    params.max_time = 20
+    # params.max_time = 20
     env = ACCEnv(render_mode=RenderMode.Save, params=params)
     eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
 

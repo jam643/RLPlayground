@@ -328,7 +328,7 @@ class ACCEnv(gym.Env):
     @dataclass
     class Params:
         dt: float = 0.5
-        max_time: float = 20.0
+        max_time: float = 30.0
         min_jerk: float = -10.0
         max_jerk: float = 10.0
         max_accel: float = 2.0
