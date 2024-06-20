@@ -4,7 +4,7 @@ from gymnasium import spaces
 from dataclasses import dataclass, fields
 from matplotlib import pyplot as plt
 import time
-from typing import Optional
+from typing import Optional, Tuple
 from scipy.linalg import solve_discrete_are
 from scipy.signal import cont2discrete
 from scipy import integrate
@@ -45,15 +45,17 @@ class LeadAction:
 
 def motion_model(
     state: State, action: Action, max_accel: float, min_accel: float, dt: float
-) -> State:
+) -> Tuple[State, Action]:
     acceleration = state.acceleration + action.jerk * dt
     acceleration = np.clip(acceleration, min_accel, max_accel)
     speed = state.speed + acceleration * dt
-    if speed < 0:
-        speed = 0
-        acceleration = 0
+    if speed < 0.0:
+        speed = 0.0
+        acceleration = 0.0
+        if state.acceleration < 0.0 and state.speed > 0.0:
+            action.jerk = (-state.acceleration) / dt
     station = state.station + speed * dt
-    return State(station=station, speed=speed, acceleration=acceleration)
+    return State(station=station, speed=speed, acceleration=acceleration), action
 
 
 def motion_model_lead(state: LeadState, action: LeadAction, dt: float) -> LeadState:
@@ -63,6 +65,25 @@ def motion_model_lead(state: LeadState, action: LeadAction, dt: float) -> LeadSt
         action.acceleration = 0
     station = state.station + speed * dt
     return LeadState(station=station, speed=speed)
+
+
+def huber_loss(error: float, delta: float) -> float:
+    """
+    Calculate the Huber loss for a given error and delta.
+
+    Parameters:
+    error (float): The error for which the loss is to be calculated.
+    delta (float): The delta value used in the Huber loss calculation.
+
+    Returns:
+    float: The calculated Huber loss.
+    """
+    abs_error = np.abs(error)
+    if abs_error <= delta:
+        loss = 0.5 * error**2
+    else:
+        loss = delta * (abs_error - 0.5 * delta)
+    return loss
 
 
 class LeadCarModel(ABC):
@@ -87,12 +108,13 @@ class LeadCarModel(ABC):
 @dataclass
 class Observation:
     relative_station: float
-    lead_speed: float
+    relative_speed: float
     relative_accel: float
     ego_speed: float
     ego_acceleration: float
     desired_speed_error: float
-    is_lead: float
+    # ttc: float
+    # is_lead: float
 
     @staticmethod
     def build(
@@ -105,22 +127,83 @@ class Observation:
         relative_station = lead_state.station - ego_state.station
         lead_speed = lead_state.speed
         relative_accel = lead_action.acceleration - ego_state.acceleration
-        is_lead = 1.0
+        relative_speed = lead_state.speed - ego_state.speed
+        # ttc = Observation.compute_ttc_est(ego_state, lead_state, lead_action)
+        # if np.isnan(ttc) or ttc > 10.0:
+        #     ttc = 10.0
+        # is_lead = 1.0
         if isinstance(lead_car_model, NoLeadModel):
-            relative_station = 0.0
-            lead_speed = 0.0
+            relative_station = 60.0
+            relative_speed = 10.0
             relative_accel = 0.0
-            is_lead = 0.0
+            # ttc = 10.0
+            # is_lead = 0.0
 
         return Observation(
             relative_station=relative_station,
-            lead_speed=lead_speed,
+            relative_speed=relative_speed,
             relative_accel=relative_accel,
             ego_speed=ego_state.speed,
             ego_acceleration=ego_state.acceleration,
             desired_speed_error=ego_state.speed - desired_speed,
-            is_lead=is_lead,
+            # ttc=ttc,
+            # is_lead=is_lead,
         )
+
+    @staticmethod
+    def solve_quadratic_real(a: float, b: float, c: float) -> float:
+        radicand = b**2 - 4 * a * c
+        if radicand < 0 or a == 0:
+            return np.nan
+        t1 = (-b + np.sqrt(radicand)) / (2 * a)
+        t2 = (-b - np.sqrt(radicand)) / (2 * a)
+        if t1 < 0:
+            t1 = np.nan
+        if t2 < 0:
+            t2 = np.nan
+        return np.nanmin([t1, t2])
+
+    @staticmethod
+    def compute_ttc_est(
+        state: State, lead_state: LeadState, lead_action: LeadAction
+    ) -> float:
+        a = 0.5 * (lead_action.acceleration - state.acceleration)
+        b = lead_state.speed - state.speed
+        c = lead_state.station - state.station
+
+        ttc_moving = np.nan
+        if a == 0 and b < 0 and c > 0:
+            ttc_moving = -c / b
+        else:
+            ttc_moving = Observation.solve_quadratic_real(a, b, c)
+            if not np.isnan(ttc_moving):
+                v_lead = lead_state.speed + lead_action.acceleration * ttc_moving
+                v_ego = state.speed + state.acceleration * ttc_moving
+                if v_lead < 0 or v_ego < 0:
+                    ttc_moving = np.nan
+
+        ttc_stopped = np.nan
+        lead_stopping_distance = np.nan
+        if lead_state.speed == 0 and lead_action.acceleration <= 0:
+            lead_stopping_distance = lead_state.station - state.station
+        elif lead_action.acceleration < 0:
+            lead_stopping_distance = (
+                -0.5 * lead_state.speed**2 / lead_action.acceleration
+                + (lead_state.station - state.station)
+            )
+
+        if not np.isnan(lead_stopping_distance) and lead_stopping_distance >= 0:
+            a = 0.5 * (-state.acceleration)
+            b = -state.speed
+            c = -lead_stopping_distance
+
+            if a == 0 and b < 0 and c > 0:
+                ttc_stopped = -c / b
+            else:
+                ttc_stopped = Observation.solve_quadratic_real(a, b, c)
+
+        ttc = np.nanmin([ttc_moving, ttc_stopped])
+        return ttc
 
     def to_np(self):
         return np.array([getattr(self, field.name) for field in fields(self)]).astype(
@@ -136,7 +219,7 @@ class Reward:
         jerk_weight: float = 0.05
         clearance_weight: float = 10.0
         collision_weight: float = 10.0
-        clearance_buffer_m: float = 2.0
+        clearance_buffer_m: float = 3.0
 
     def __init__(self, params: Params):
         self.params = params
@@ -151,10 +234,11 @@ class Reward:
         tracking_cost = self.params.speed_weight * np.abs(obs.desired_speed_error)
 
         safety_cost = 0
-        rel_speed = obs.lead_speed - obs.ego_speed
-        if self.is_collision(obs, lead_car_model) and rel_speed <= 0:
+        if self.is_collision(obs, lead_car_model) and obs.relative_speed <= 0:
             safety_cost = (
-                self.params.collision_weight * (obs.lead_speed - obs.ego_speed) ** 2
+                self.params.collision_weight
+                * obs.relative_speed**2
+                # * huber_loss(error=(obs.lead_speed - obs.ego_speed), delta=4) ** 2
             )
 
         clearance_cost = 0
@@ -217,14 +301,36 @@ class DecelLeadModel(LeadCarModel):
         return action
 
 
+@dataclass
+class ScenarioOptionProbabilities:
+    decel: float = 0.0
+    const_speed_lead: float = 0.0
+    stationary_lead: float = 0.0
+    no_lead: float = 0.0
+    no_lead_from_standstill: float = 0.0
+
+    def __postinit__(self):
+        sum_probs = np.sum([getattr(self, attr.name) for attr in fields(self)])
+        assert (
+            sum_probs == 1.0
+        ), f"Probabilities must sum to 1.0, but sum is {sum_probs}"
+
+    def sample_scenario(self):
+        return np.random.choice(
+            list(self.__dict__.keys()),
+            p=list(self.__dict__.values()),
+        )
+
+
 class ACCEnv(gym.Env):
     """Custom Environment that follows gym interface."""
 
     @dataclass
     class Params:
         dt: float = 0.5
-        max_time: float = 15.0
-        max_jerk: float = 20.0
+        max_time: float = 20.0
+        min_jerk: float = -10.0
+        max_jerk: float = 10.0
         max_accel: float = 2.0
         min_accel: float = -7.0
         speed_limit: float = 20.0
@@ -241,6 +347,7 @@ class ACCEnv(gym.Env):
             shape=(1,),
             dtype=np.float32,
         )
+        # self.action_space = spaces.Discrete(8)
         self.observation_space = spaces.Box(
             low=-np.inf,
             high=np.inf,
@@ -259,9 +366,12 @@ class ACCEnv(gym.Env):
         self.jerk_plot_idx = 3
         self.reward_plot_idx = 4
         self.headway_time_plot_idx = 5
+        self.ttc_plot_idx = 6
 
-        self.fig, self.axs = plt.subplots(nrows=2, ncols=3, figsize=(20, 10))
-        plt.subplots_adjust(hspace=0.1, wspace=0.1)
+        self.fig, self.axs = plt.subplots(nrows=2, ncols=4, figsize=(20, 10))
+        plt.subplots_adjust(
+            left=0.05, right=0.95, top=0.95, bottom=0.05, wspace=0.2, hspace=0.2
+        )
         self.axs = self.axs.flatten()
         self.lines = []
         for ax in self.axs:
@@ -278,6 +388,7 @@ class ACCEnv(gym.Env):
         self.axs[self.jerk_plot_idx].set_ylabel("Jerk [m/s^3]")
         self.axs[self.reward_plot_idx].set_ylabel("Reward")
         self.axs[self.headway_time_plot_idx].set_ylabel("Following Time [s]")
+        self.axs[self.ttc_plot_idx].set_ylabel("TTC [s]")
 
         self.axs[self.speed_plot_idx].axhline(
             y=self.params.desired_speed,
@@ -322,16 +433,29 @@ class ACCEnv(gym.Env):
                 for state, lead_state in zip(self.state_array, self.lead_state_array)
             ],
         )
+        ttc_est = [
+            Observation.compute_ttc_est(state, lead_state, lead_action)
+            for state, lead_state, lead_action in zip(
+                self.state_array[1:],
+                self.lead_state_array[1:],
+                self.lead_action_array,
+            )
+        ]
+        self.lines[self.ttc_plot_idx]["ego"].set_data(
+            self.action_time_array,
+            ttc_est,
+        )
 
-        self.lines[self.speed_plot_idx]["lead"].set_data(
-            self.state_time_array, [s.speed for s in self.lead_state_array]
-        )
-        self.lines[self.station_plot_idx]["lead"].set_data(
-            self.state_time_array, [s.station for s in self.lead_state_array]
-        )
-        self.lines[self.acceration_plot_idx]["lead"].set_data(
-            self.action_time_array, [a.acceleration for a in self.lead_action_array]
-        )
+        if not isinstance(self.lead_car_model, NoLeadModel):
+            self.lines[self.speed_plot_idx]["lead"].set_data(
+                self.state_time_array, [s.speed for s in self.lead_state_array]
+            )
+            self.lines[self.station_plot_idx]["lead"].set_data(
+                self.state_time_array, [s.station for s in self.lead_state_array]
+            )
+            self.lines[self.acceration_plot_idx]["lead"].set_data(
+                self.action_time_array, [a.acceleration for a in self.lead_action_array]
+            )
 
         self.axs[self.reward_plot_idx].legend(
             [
@@ -349,24 +473,45 @@ class ACCEnv(gym.Env):
             self.params.min_accel, self.params.max_accel
         )
         self.axs[self.jerk_plot_idx].set_ylim(
-            -self.params.max_jerk, self.params.max_jerk
+            self.params.min_jerk, self.params.max_jerk
         )
         self.axs[self.speed_plot_idx].set_ylim(0.0, self.params.speed_limit + 1.0)
         self.axs[self.headway_time_plot_idx].set_ylim(0.0, 10.0)
+        self.axs[self.ttc_plot_idx].set_ylim(0.0, 10.0)
 
         plt.draw()
 
     def step(self, action):
         # update state
-        action = Action(jerk=action[0] * self.params.max_jerk)
-        self.action_array.append(action)
-        self.state = motion_model(
+        # if action == 0:
+        #     action = Action(jerk=-7.0)
+        # elif action == 1:
+        #     action = Action(jerk=-3.0)
+        # elif action == 2:
+        #     action = Action(jerk=-1.0)
+        # elif action == 3:
+        #     action = Action(jerk=-0.5)
+        # elif action == 4:
+        #     action = Action(jerk=0.0)
+        # elif action == 5:
+        #     action = Action(jerk=0.5)
+        # elif action == 6:
+        #     action = Action(jerk=1.0)
+        # elif action == 7:
+        #     action = Action(jerk=2.0)
+
+        action = Action(
+            jerk=action[0] * (self.params.max_jerk - self.params.min_jerk) / 2.0
+            + (self.params.max_jerk + self.params.min_jerk) / 2.0
+        )
+        self.state, action = motion_model(
             self.state,
             action,
             min_accel=self.params.min_accel,
             max_accel=self.params.max_accel,
             dt=self.params.dt,
         )
+        self.action_array.append(action)
         self.state_array.append(self.state)
         self.state_time_array.append(self.time)
         self.action_time_array.append(self.time)
@@ -404,6 +549,7 @@ class ACCEnv(gym.Env):
         ego_init_state: Optional[State] = None,
         lead_car_model: Optional[LeadCarModel] = None,
         desired_speed: Optional[float] = None,
+        scenario_option_probabilities: Optional[ScenarioOptionProbabilities] = None,
         seed=None,
         options=None,
     ):
@@ -415,14 +561,35 @@ class ACCEnv(gym.Env):
         else:
             self.params.desired_speed = np.random.uniform(0, self.params.speed_limit)
 
+        if scenario_option_probabilities is None:
+            scenario_option_probabilities = ScenarioOptionProbabilities(
+                decel=0.70,
+                const_speed_lead=0.15,
+                stationary_lead=0.05,
+                no_lead=0.07,
+                no_lead_from_standstill=0.03,
+            )
+            # scenario_option_probabilities = ScenarioOptionProbabilities(
+            #     no_lead_from_standstill=1.0
+            # )
+
+        scenario_choice = scenario_option_probabilities.sample_scenario()
+
         if ego_init_state is not None:
             self.state = ego_init_state
         else:
-            self.state = State(
-                station=0.0,
-                speed=np.random.uniform(0.0, self.params.desired_speed + 5.0),
-                acceleration=np.random.uniform(-2.0, 2.0),
-            )
+            if scenario_choice == "no_lead_from_standstill":
+                self.state = State(
+                    station=0.0,
+                    speed=0.0,
+                    acceleration=0.0,
+                )
+            else:
+                self.state = State(
+                    station=0.0,
+                    speed=np.random.uniform(0.0, self.params.desired_speed + 5.0),
+                    acceleration=np.random.uniform(-2.0, 2.0),
+                )
 
         if lead_car_model is None:
             lead_init_state = LeadState(
@@ -432,10 +599,7 @@ class ACCEnv(gym.Env):
                 speed=np.random.uniform(0.0, self.params.desired_speed + 5.0),
             )
 
-            options = {"decel": 0.70, "const_speed": 0.2, "no_lead": 0.1}
-            # options = {"decel": 0.0, "const_speed": 0.0, "no_lead": 1.0}
-            choice = np.random.choice(list(options.keys()), p=list(options.values()))
-            if choice == "decel":
+            if scenario_choice == "decel":
                 accel = np.random.uniform(-10, 2)
                 accel_duration = np.random.uniform(
                     0.5, 2.0 * lead_init_state.speed / (np.abs(accel) + 1e-3)
@@ -449,13 +613,24 @@ class ACCEnv(gym.Env):
                         accel_duration=accel_duration,
                     ),
                 )
-            elif choice == "no_lead":
+            elif (
+                scenario_choice == "no_lead"
+                or scenario_choice == "no_lead_from_standstill"
+            ):
                 self.lead_car_model = NoLeadModel()
-            else:
+            elif scenario_choice == "const_speed_lead":
                 self.lead_car_model = ConstSpeedLeadModel(
                     init_state=lead_init_state,
                     params=LeadCarModel.Params(dt=self.params.dt),
                 )
+            elif scenario_choice == "stationary_lead":
+                lead_init_state.speed = 0.0
+                self.lead_car_model = ConstSpeedLeadModel(
+                    init_state=lead_init_state,
+                    params=LeadCarModel.Params(dt=self.params.dt),
+                )
+            else:
+                raise ValueError(f"Invalid choice: {scenario_choice}")
         else:
             self.lead_car_model = lead_car_model
 
@@ -501,14 +676,26 @@ if __name__ == "__main__":
     env = ACCEnv(render_mode=RenderMode.Human)
     check_env(env, warn=True)
 
-    obs, _ = env.reset()
+    lead_car_model = DecelLeadModel(
+        LeadCarModel.Params(dt=env.params.dt),
+        init_state=LeadState(station=10.0, speed=5.0),
+        decel_params=DecelLeadModel.DecelParams(
+            time_accel_start=0.0, accel=-1.0, accel_duration=np.inf
+        ),
+    )
+    lead_car_model = NoLeadModel()
+    obs, _ = env.reset(
+        ego_init_state=State(station=0, speed=0.0, acceleration=0.0),
+        lead_car_model=lead_car_model,
+    )
 
     print(env.observation_space)
     print(env.action_space)
     print(env.action_space.sample())
 
-    truncated = False
-    while truncated is False and plt.get_fignums():
-        obs, reward, terminated, truncated, info = env.step([0.3])
+    done = False
+    while done is False and plt.get_fignums():
+        obs, reward, terminated, truncated, info = env.step([0.01])
+        done = terminated or truncated
         env.render()
     plt.show()

@@ -55,12 +55,12 @@ def eval_policy(
     decels = np.linspace(0, 9, 4)
     for decel in decels:
         obs, _ = env.reset(
-            ego_init_state=State(station=0, speed=15, acceleration=0),
+            ego_init_state=State(station=0, speed=desired_speed, acceleration=0),
             lead_car_model=DecelLeadModel(
                 LeadCarModel.Params(dt=env.params.dt),
-                init_state=LeadState(station=20, speed=15),
+                init_state=LeadState(station=desired_speed * 0.5, speed=desired_speed),
                 decel_params=DecelLeadModel.DecelParams(
-                    time_accel_start=5, accel=-decel, accel_duration=np.inf
+                    time_accel_start=7, accel=-decel, accel_duration=np.inf
                 ),
             ),
             desired_speed=desired_speed,
@@ -124,8 +124,8 @@ def eval_policy(
 
 
 if __name__ == "__main__":
-    model_name = "PPO_acc_8192nsteps_256batch_run3"
-    model_steps = "700000"
+    model_name = "PPO_acc_8192nsteps_256batch_run12"
+    model_steps = "800000"
 
     vec_env = make_vec_env(ACCEnv, n_envs=1)
 

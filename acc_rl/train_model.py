@@ -1,4 +1,4 @@
-from acc_env import ACCEnv, RenderMode
+from acc_env import ACCEnv, RenderMode, ScenarioOptionProbabilities
 from eval_policy import eval_policy
 
 from stable_baselines3 import PPO, A2C, DQN, SAC
@@ -11,7 +11,7 @@ import time
 import os
 import numpy as np
 
-exp_name = f"PPO_acc_8192nsteps_256batch_run8"
+exp_name = "PPO_acc_4092nsteps_128batch"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "models", exp_name)
@@ -26,7 +26,9 @@ os.makedirs(logdir, exist_ok=True)
 vec_env = make_vec_env(
     ACCEnv,
     n_envs=1,
-    env_kwargs={"render_mode": "none"},
+    env_kwargs={
+        "render_mode": RenderMode.Null,
+    },
 )
 # vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=False)
 
@@ -39,13 +41,16 @@ model = PPO(
     verbose=1,
     device=device,
     tensorboard_log=logdir,
-    n_steps=8192,
-    batch_size=256,
+    n_steps=4092,
+    batch_size=128,
+    # policy_kwargs=dict(
+    #     net_arch=[dict(pi=[32, 32], vf=[32, 32])]  # Adjusted network architecture
+    # ),
 )
 
 TIMESTEPS = 100000
 iters = 0
-while iters < 7:
+while iters < 8:
     iters += 1
     model.learn(
         total_timesteps=TIMESTEPS,
@@ -57,7 +62,7 @@ while iters < 7:
     image_iter_dir = os.path.join(image_dir, f"{TIMESTEPS*iters}")
     os.makedirs(image_iter_dir, exist_ok=True)
     params = ACCEnv.Params()
-    params.max_time = 30
+    params.max_time = 20
     env = ACCEnv(render_mode=RenderMode.Save, params=params)
     eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
 
