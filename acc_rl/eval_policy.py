@@ -124,8 +124,8 @@ def eval_policy(
 
 
 if __name__ == "__main__":
-    model_name = "PPO_acc_8192nsteps_256batch_run12"
-    model_steps = "800000"
+    model_name = "PPO_acc_run2"
+    model_steps = "1000000"
 
     vec_env = make_vec_env(ACCEnv, n_envs=1)
 
