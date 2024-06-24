@@ -6,6 +6,7 @@ from acc_env import (
     State,
     LeadState,
     DecelLeadModel,
+    CutinLeadModel,
     ConstSpeedLeadModel,
     RenderMode,
     LeadCarModel,
@@ -27,6 +28,36 @@ def eval_policy(
     num_rand_envs: int = int(1e6),
     desired_speed: float = 15,
 ):
+
+    # Sweep over decels
+    cutin_headway_times = np.linspace(4.0, 6.0, 4)
+    for cutin_headway_time in cutin_headway_times:
+        obs, _ = env.reset(
+            ego_init_state=State(station=0, speed=0.9*desired_speed, acceleration=0),
+            lead_car_model=CutinLeadModel(
+                LeadCarModel.Params(dt=env.params.dt),
+                init_state=LeadState(station=0.0, speed=0.0),
+                cutin_params=CutinLeadModel.CutinParams(
+                    time_cutin=7, relative_speed=0.0, cutin_distance=cutin_headway_time*desired_speed
+                ),
+            ),
+            desired_speed=desired_speed,
+        )
+        done = False
+        while not done and plt.get_fignums():
+            action, _ = model.predict(obs, deterministic=True)
+            obs, _, terminated, truncated, _ = env.step(action)
+            title = f"Lead cutin headway: {cutin_headway_time} sec"
+            if render_mode == RenderMode.Human:
+                env.render(title=title)
+            done = terminated or truncated
+        if render_mode == RenderMode.Save:
+            env.render(
+                title=title,
+                file_name=os.path.join(
+                    save_dir_name, "cutin_" + str(cutin_headway_time).replace(".", "_")
+                ),
+            )
 
     # Sweep over decels
     decels = np.linspace(0, 9, 4)
@@ -161,9 +192,9 @@ if __name__ == "__main__":
     vec_env = make_vec_env(ACCEnv, n_envs=1)
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_dir, "models", model_name, model_steps)
+    model_path = os.path.join(base_dir, "model_checkpoints", model_name, model_steps)
     model = PPO.load(
-        os.path.join(base_dir, "models", model_name, model_steps), env=vec_env
+        os.path.join(base_dir, "model_checkpoints", model_name, model_steps), env=vec_env
     )
 
     mean_reward, std_reward = evaluate_policy(

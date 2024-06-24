@@ -93,7 +93,6 @@ def huber_loss(error: float, delta: float) -> float:
         loss = delta * (abs_error - 0.5 * delta)
     return loss
 
-
 class LeadCarModel(ABC):
     @dataclass
     class Params:
@@ -107,10 +106,96 @@ class LeadCarModel(ABC):
     def get_action(self, time: float, state: LeadState) -> LeadAction:
         pass
 
-    def step(self, time: float):
+    def step(self, time: float, ego_state: State = State(0, 0, 0)):
         action = self.get_action(time, self.state)
         self.state = motion_model_lead(self.state, action, self.params.dt)
         return self.state, action
+
+    @abstractmethod
+    def does_lead_exist(self, time) -> bool:
+        pass
+
+class ConstSpeedLeadModel(LeadCarModel):
+    def get_action(self, time: float, state: LeadState) -> LeadAction:
+        return LeadAction(acceleration=0.0)
+
+    def does_lead_exist(self, time) -> bool:
+        return True
+
+
+class NoLeadModel(LeadCarModel):
+    def __init__(self):
+        super().__init__(params=LeadCarModel.Params(dt=0.0), init_state=LeadState(0, 0))
+
+    def get_action(self, time: float, state: LeadState) -> LeadAction:
+        return LeadAction(acceleration=0.0)
+
+    def step(self, time: float, ego_state: State = State(0, 0, 0)):
+        return LeadState(0, 0), LeadAction(0.0)
+
+    def does_lead_exist(self, time: float) -> bool:
+        return False
+
+
+class DecelLeadModel(LeadCarModel):
+    @dataclass
+    class DecelParams:
+        time_accel_start: float
+        accel: float
+        accel_duration: float
+
+    def __init__(
+        self,
+        params: LeadCarModel.Params,
+        init_state: LeadState,
+        decel_params: DecelParams,
+    ):
+        super().__init__(params, init_state)
+        self.decel_params = decel_params
+
+    def get_action(self, time: float, state: LeadState) -> LeadAction:
+        action = LeadAction(acceleration=0.0)
+        if (
+                self.decel_params.time_accel_start <= time < self.decel_params.time_accel_start + self.decel_params.accel_duration
+        ):
+            action = LeadAction(acceleration=self.decel_params.accel)
+        return action
+
+    def does_lead_exist(self, time: float) -> bool:
+        return True
+
+
+class CutinLeadModel(LeadCarModel):
+    @dataclass
+    class CutinParams:
+        time_cutin: float
+        cutin_distance: float
+        relative_speed: float
+
+    def __init__(
+        self,
+        params: LeadCarModel.Params,
+        init_state: LeadState,
+        cutin_params: CutinParams,
+    ):
+        super().__init__(params, init_state)
+        self.cutin_params = cutin_params
+
+    def get_action(self, time: float, state: LeadState) -> LeadAction:
+        return LeadAction(acceleration=0.0)
+
+    def step(self, time: float, ego_state: State):
+        if time < self.cutin_params.time_cutin:
+            self.state = LeadState(station=ego_state.station + self.cutin_params.cutin_distance, speed=ego_state.speed + self.cutin_params.relative_speed)
+            return self.state, LeadAction(0.0)
+        else:
+            return super().step(time)
+
+    def does_lead_exist(self, time: float) -> bool:
+        if time < self.cutin_params.time_cutin:
+            return False
+        else:
+            return True
 
 
 @dataclass
@@ -133,6 +218,7 @@ class Observation:
         lead_action: LeadAction,
         desired_speed: float,
         lead_car_model: LeadCarModel,
+        time: float
     ):
         relative_station = lead_state.station - ego_state.station
         lead_speed = lead_state.speed
@@ -143,7 +229,7 @@ class Observation:
         # if np.isnan(ttc) or ttc > 10.0:
         #     ttc = 10.0
         is_lead = 1.0
-        if isinstance(lead_car_model, NoLeadModel):
+        if not lead_car_model.does_lead_exist(time):
             relative_station = 80.0
             relative_speed = 0.0
             relative_accel = 0.0
@@ -253,7 +339,7 @@ class Reward:
         self.params = params
 
     def compute_reward(
-        self, obs: Observation, action: Action, lead_car_model: LeadCarModel
+        self, obs: Observation, action: Action, lead_car_model: LeadCarModel, time: float
     ):
         comfort_accel_cost = self.params.accel_weight * obs.ego_acceleration**2
 
@@ -264,7 +350,7 @@ class Reward:
         tracking_cost -= 0.1 if np.abs(obs.desired_speed_error) < 0.5 else 0.0
 
         safety_cost = 0
-        if self.is_collision(obs, lead_car_model) and obs.relative_speed <= 0:
+        if self.is_collision(obs, lead_car_model, time) and obs.relative_speed <= 0:
             safety_cost = (
                 self.params.collision_weight
                 * obs.relative_speed**2
@@ -272,9 +358,7 @@ class Reward:
             )
 
         clearance_cost = 0
-        if obs.relative_station <= self.params.clearance_buffer_m and not isinstance(
-            lead_car_model, NoLeadModel
-        ):
+        if obs.relative_station <= self.params.clearance_buffer_m and lead_car_model.does_lead_exist(time):
             clearance_cost = (
                 self.params.clearance_weight
                 * (obs.relative_station - self.params.clearance_buffer_m) ** 2
@@ -296,7 +380,7 @@ class Reward:
             obs.relative_speed + obs.ego_speed <= 1e-3
             and obs.relative_station <= self.params.stationary_lead_buffer_m
             and obs.relative_station >= self.params.clearance_buffer_m
-            and not isinstance(lead_car_model, NoLeadModel)
+            and lead_car_model.does_lead_exist(time)
         ):
             stationary_lead_buffer_reward = self.params.speed_weight * (
                 -obs.desired_speed_error - obs.ego_speed
@@ -311,53 +395,8 @@ class Reward:
             # - stationary_lead_buffer_cost
         ) / 30.0
 
-    def is_collision(self, obs: Observation, lead_car_model: LeadCarModel):
-        return obs.relative_station <= 0.0 and not isinstance(
-            lead_car_model, NoLeadModel
-        )
-
-
-class ConstSpeedLeadModel(LeadCarModel):
-    def get_action(self, time: float, state: LeadState) -> LeadAction:
-        return LeadAction(acceleration=0.0)
-
-
-class NoLeadModel(LeadCarModel):
-    def __init__(self):
-        super().__init__(params=LeadCarModel.Params(dt=0.0), init_state=LeadState(0, 0))
-
-    def get_action(self, time: float, state: LeadState) -> LeadAction:
-        return LeadAction(acceleration=0.0)
-
-    def step(self, time: float):
-        return LeadState(0, 0), LeadAction(0.0)
-
-
-class DecelLeadModel(LeadCarModel):
-    @dataclass
-    class DecelParams:
-        time_accel_start: float
-        accel: float
-        accel_duration: float
-
-    def __init__(
-        self,
-        params: LeadCarModel.Params,
-        init_state: LeadState,
-        decel_params: DecelParams,
-    ):
-        super().__init__(params, init_state)
-        self.decel_params = decel_params
-
-    def get_action(self, time: float, state: LeadState) -> LeadAction:
-        action = LeadAction(acceleration=0.0)
-        if (
-            self.decel_params.time_accel_start <= time
-            and time
-            < self.decel_params.time_accel_start + self.decel_params.accel_duration
-        ):
-            action = LeadAction(acceleration=self.decel_params.accel)
-        return action
+    def is_collision(self, obs: Observation, lead_car_model: LeadCarModel, time: float):
+        return obs.relative_station <= 0.0 and lead_car_model.does_lead_exist(time)
 
 
 @dataclass
@@ -514,16 +553,15 @@ class ACCEnv(gym.Env):
             ttc_est,
         )
 
-        if not isinstance(self.lead_car_model, NoLeadModel):
-            self.lines[self.speed_plot_idx]["lead"].set_data(
-                self.state_time_array, [s.speed for s in self.lead_state_array]
-            )
-            self.lines[self.station_plot_idx]["lead"].set_data(
-                self.state_time_array, [s.station for s in self.lead_state_array]
-            )
-            self.lines[self.acceration_plot_idx]["lead"].set_data(
-                self.action_time_array, [a.acceleration for a in self.lead_action_array]
-            )
+        self.lines[self.speed_plot_idx]["lead"].set_data(
+            self.state_time_array, [s.speed if self.lead_car_model.does_lead_exist(t) else np.nan for t, s in zip(self.state_time_array, self.lead_state_array)]
+        )
+        self.lines[self.station_plot_idx]["lead"].set_data(
+            self.state_time_array, [s.station if self.lead_car_model.does_lead_exist(t) else np.nan for t, s in zip(self.state_time_array, self.lead_state_array)]
+        )
+        self.lines[self.acceration_plot_idx]["lead"].set_data(
+            self.action_time_array, [a.acceleration if self.lead_car_model.does_lead_exist(t) else np.nan for t, a in zip(self.action_time_array, self.lead_action_array)]
+        )
 
         self.axs[self.reward_plot_idx].legend(
             [
@@ -584,7 +622,7 @@ class ACCEnv(gym.Env):
         self.state_time_array.append(self.time)
         self.action_time_array.append(self.time)
 
-        lead_state, lead_action = self.lead_car_model.step(self.time)
+        lead_state, lead_action = self.lead_car_model.step(self.time, self.state)
         self.lead_state_array.append(lead_state)
         self.lead_action_array.append(lead_action)
 
@@ -595,18 +633,19 @@ class ACCEnv(gym.Env):
             lead_action=lead_action,
             desired_speed=self.params.desired_speed,
             lead_car_model=self.lead_car_model,
+            time=self.time
         )
 
         # compute reward
         reward = self.reward_class.compute_reward(
-            observation, action, self.lead_car_model
+            observation, action, self.lead_car_model, self.time
         )
         self.reward_array.append(reward)
 
         truncated, terminated = False, False
         if self.time >= self.params.max_time:
             truncated = True
-        if self.reward_class.is_collision(observation, self.lead_car_model):
+        if self.reward_class.is_collision(observation, self.lead_car_model, self.time):
             terminated = True
         self.time += self.params.dt
 
@@ -715,6 +754,7 @@ class ACCEnv(gym.Env):
             lead_action=LeadAction(0.0),
             desired_speed=self.params.desired_speed,
             lead_car_model=self.lead_car_model,
+            time=self.time
         ).to_np()
 
         if self.render_mode == RenderMode.Human or self.render_mode == RenderMode.Save:

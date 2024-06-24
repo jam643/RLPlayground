@@ -8,6 +8,11 @@ from stable_baselines3.common.policies import BasePolicy
 
 import os
 
+# Update these with model checkpoint info for tracing
+#############
+model_name = "PPO_ACC_V2"
+model_steps = "900000"
+#############
 
 class OnnxableSB3Policy(th.nn.Module):
     def __init__(self, policy: BasePolicy):
@@ -23,26 +28,21 @@ class OnnxableSB3Policy(th.nn.Module):
         return self.policy(observation, deterministic=True)
 
 
-# Example: model = PPO("MlpPolicy", "Pendulum-v1")
-model_name = "PPO_acc_run2"
-model_steps = "1000000"
-
-vec_env = make_vec_env(ACCEnv, n_envs=1)
-
 base_dir = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(base_dir, "models", model_name, model_steps)
 model = PPO.load(
-    os.path.join(base_dir, "models", model_name, model_steps), device="cpu"
+    os.path.join(base_dir, "model_checkpoints", model_name, model_steps), device="cpu"
 )
 
 onnx_policy = OnnxableSB3Policy(model.policy)
 
 observation_size = model.observation_space.shape
 dummy_input = th.randn(1, *observation_size)
+
+onnx_traced_model_path = os.path.join("traced_models", f"{model_name}.onnx")
 th.onnx.export(
     onnx_policy,
     dummy_input,
-    "ppo_traced.onnx",
+    onnx_traced_model_path,
     opset_version=17,
     input_names=["input"],
 )
@@ -53,12 +53,11 @@ import onnx
 import onnxruntime as ort
 import numpy as np
 
-onnx_path = "ppo_traced.onnx"
-onnx_model = onnx.load(onnx_path)
+onnx_model = onnx.load(onnx_traced_model_path)
 onnx.checker.check_model(onnx_model)
 
 observation = np.zeros((1, *observation_size)).astype(np.float32)
-ort_sess = ort.InferenceSession(onnx_path)
+ort_sess = ort.InferenceSession(onnx_traced_model_path)
 actions, values, log_prob = ort_sess.run(None, {"input": observation})
 
 print(actions, values, log_prob)
@@ -69,7 +68,8 @@ with th.no_grad():
 
 
 # See "ONNX export" for imports and OnnxablePolicy
-jit_path = "ppo_traced.pt"
+
+jit_path = os.path.join("traced_models", f"{model_name}.pt")
 
 # Trace and optimize the module
 traced_module = th.jit.trace(onnx_policy.eval(), dummy_input)

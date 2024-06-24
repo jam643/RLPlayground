@@ -12,7 +12,7 @@ import numpy as np
 exp_name = "PPO_acc_run37_no_lead_accel_lead_bool"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
-models_dir = os.path.join(base_dir, "models", exp_name)
+models_dir = os.path.join(base_dir, "model_checkpoints", exp_name)
 image_dir = os.path.join(base_dir, "image", exp_name)
 logdir = os.path.join(base_dir, "logs")
 
