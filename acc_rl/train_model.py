@@ -5,13 +5,11 @@ from stable_baselines3 import PPO, A2C, DQN, SAC
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
-from matplotlib import pyplot as plt
 import torch
-import time
 import os
 import numpy as np
 
-exp_name = "PPO_acc_run2"
+exp_name = "PPO_acc_run37_no_lead_accel_lead_bool"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "models", exp_name)
@@ -41,7 +39,7 @@ model = PPO(
     verbose=1,
     device=device,
     tensorboard_log=logdir,
-    n_steps=2046 * 8,
+    n_steps=2048 * 16,
     batch_size=64 * 4,
     # policy_kwargs=dict(
     #     net_arch=[dict(pi=[32, 32], vf=[32, 32])]  # Adjusted network architecture
@@ -50,7 +48,7 @@ model = PPO(
 
 TIMESTEPS = 100000
 iters = 0
-while iters < 10:
+while iters < 15:
     iters += 1
     model.learn(
         total_timesteps=TIMESTEPS,
