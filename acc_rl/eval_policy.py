@@ -28,29 +28,6 @@ def eval_policy(
     desired_speed: float = 15,
 ):
 
-    # Accel from init speed on open road
-    init_speeds = np.linspace(0, 15, 4)
-    for init_speed in init_speeds:
-        obs, _ = env.reset(
-            ego_init_state=State(station=0, speed=init_speed, acceleration=0),
-            lead_car_model=NoLeadModel(),
-            desired_speed=desired_speed,
-        )
-        done = False
-        while not done and plt.get_fignums():
-            action, _ = model.predict(obs, deterministic=True)
-            obs, _, terminated, truncated, _ = env.step(action)
-            if render_mode == RenderMode.Human:
-                env.render(title=f"Accel from init speed: {init_speed}")
-            done = terminated or truncated
-        if render_mode == RenderMode.Save:
-            env.render(
-                title=f"Accel from init speed: {init_speed}",
-                file_name=os.path.join(
-                    save_dir_name, "init_speed_" + str(init_speed).replace(".", "_")
-                ),
-            )
-
     # Sweep over decels
     decels = np.linspace(0, 9, 4)
     for decel in decels:
@@ -69,12 +46,13 @@ def eval_policy(
         while not done and plt.get_fignums():
             action, _ = model.predict(obs, deterministic=True)
             obs, _, terminated, truncated, _ = env.step(action)
+            title = f"Const Decel: {decel}"
             if render_mode == RenderMode.Human:
-                env.render(title=f"Const Decel: {decel}")
+                env.render(title=title)
             done = terminated or truncated
         if render_mode == RenderMode.Save:
             env.render(
-                title=f"Accel from init speed: {init_speed}",
+                title=title,
                 file_name=os.path.join(
                     save_dir_name, "decel_" + str(decel).replace(".", "_")
                 ),
@@ -95,14 +73,66 @@ def eval_policy(
         while not done and plt.get_fignums():
             action, _ = model.predict(obs, deterministic=True)
             obs, _, terminated, truncated, _ = env.step(action)
+            title = f"Steady state car follow: {speed}"
             if render_mode == RenderMode.Human:
-                env.render(title=f"Const Speed: {speed}")
+                env.render(title=title)
             done = terminated or truncated
         if render_mode == RenderMode.Save:
             env.render(
-                title=f"Accel from init speed: {init_speed}",
+                title=title,
                 file_name=os.path.join(
                     save_dir_name, "speed_" + str(speed).replace(".", "_")
+                ),
+            )
+
+        # Sweep over const speeds to see following distances
+    lead_stations = np.linspace(20, 50, 4)
+    for lead_station in lead_stations:
+        obs, _ = env.reset(
+            ego_init_state=State(station=0, speed=speed, acceleration=0),
+            lead_car_model=ConstSpeedLeadModel(
+                params=LeadCarModel.Params(dt=env.params.dt),
+                init_state=LeadState(station=lead_station, speed=0.0),
+            ),
+            desired_speed=desired_speed,
+        )
+        done = False
+        while not done and plt.get_fignums():
+            action, _ = model.predict(obs, deterministic=True)
+            obs, _, terminated, truncated, _ = env.step(action)
+            title = f"Stationary lead station: {lead_station}"
+            if render_mode == RenderMode.Human:
+                env.render(title=title)
+            done = terminated or truncated
+        if render_mode == RenderMode.Save:
+            env.render(
+                title=title,
+                file_name=os.path.join(
+                    save_dir_name, "lead_station_" + str(lead_station).replace(".", "_")
+                ),
+            )
+
+    # Accel from init speed on open road
+    init_speeds = np.linspace(0, 15, 4)
+    for init_speed in init_speeds:
+        obs, _ = env.reset(
+            ego_init_state=State(station=0, speed=init_speed, acceleration=0),
+            lead_car_model=NoLeadModel(),
+            desired_speed=desired_speed,
+        )
+        done = False
+        while not done and plt.get_fignums():
+            action, _ = model.predict(obs, deterministic=True)
+            obs, _, terminated, truncated, _ = env.step(action)
+            title = f"Accel from init speed: {init_speed}"
+            if render_mode == RenderMode.Human:
+                env.render(title=title)
+            done = terminated or truncated
+        if render_mode == RenderMode.Save:
+            env.render(
+                title=title,
+                file_name=os.path.join(
+                    save_dir_name, "init_speed_" + str(init_speed).replace(".", "_")
                 ),
             )
 
@@ -113,19 +143,20 @@ def eval_policy(
         while not done and plt.get_fignums():
             action, _ = model.predict(obs, deterministic=True)
             obs, _, terminated, truncated, _ = env.step(action)
+            title = f"Random Env"
             if render_mode == RenderMode.Human:
-                env.render(title=f"Random Env")
+                env.render(title=title)
             done = terminated or truncated
         if render_mode == RenderMode.Save:
             env.render(
-                title=f"Random Env",
+                title=title,
                 file_name=os.path.join(save_dir_name, f"random_env_{i}"),
             )
 
 
 if __name__ == "__main__":
-    model_name = "PPO_acc_run2"
-    model_steps = "1000000"
+    model_name = "PPO_ACC_V2"
+    model_steps = "900000"
 
     vec_env = make_vec_env(ACCEnv, n_envs=1)
 

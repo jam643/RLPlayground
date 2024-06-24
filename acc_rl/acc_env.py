@@ -48,13 +48,21 @@ def motion_model(
 ) -> Tuple[State, Action]:
     acceleration = state.acceleration + action.jerk * dt
     acceleration = np.clip(acceleration, min_accel, max_accel)
-    speed = state.speed + acceleration * dt
+    speed = state.speed + state.acceleration * dt + 0.5 * action.jerk * dt**2
     if speed < 0.0:
         speed = 0.0
         acceleration = 0.0
         if state.acceleration < 0.0 and state.speed > 0.0:
-            action.jerk = (-state.acceleration) / dt
-    station = state.station + speed * dt
+            action.jerk = 2 * state.speed / (dt**2)
+    station = max(
+        state.station,
+        (
+            state.station
+            + state.speed * dt
+            + state.acceleration * dt**2 / 2
+            + 1 / 6 * action.jerk * dt**3
+        ),
+    )
     return State(station=station, speed=speed, acceleration=acceleration), action
 
 
@@ -109,12 +117,14 @@ class LeadCarModel(ABC):
 class Observation:
     relative_station: float
     relative_speed: float
-    relative_accel: float
+    # relative_accel: float
     ego_speed: float
     ego_acceleration: float
     desired_speed_error: float
+    # lead_speed: float
+    # lead_accel: float
     # ttc: float
-    # is_lead: float
+    is_lead: float
 
     @staticmethod
     def build(
@@ -128,26 +138,31 @@ class Observation:
         lead_speed = lead_state.speed
         relative_accel = lead_action.acceleration - ego_state.acceleration
         relative_speed = lead_state.speed - ego_state.speed
+        lead_accel = lead_action.acceleration
         # ttc = Observation.compute_ttc_est(ego_state, lead_state, lead_action)
         # if np.isnan(ttc) or ttc > 10.0:
         #     ttc = 10.0
-        # is_lead = 1.0
+        is_lead = 1.0
         if isinstance(lead_car_model, NoLeadModel):
-            relative_station = 60.0
-            relative_speed = 10.0
+            relative_station = 80.0
+            relative_speed = 0.0
             relative_accel = 0.0
+            # lead_speed = 20.0
+            # lead_accel = 0.0
             # ttc = 10.0
-            # is_lead = 0.0
+            is_lead = 0.0
 
         return Observation(
             relative_station=relative_station,
             relative_speed=relative_speed,
-            relative_accel=relative_accel,
+            # relative_accel=relative_accel,
             ego_speed=ego_state.speed,
             ego_acceleration=ego_state.acceleration,
-            desired_speed_error=ego_state.speed - desired_speed,
+            desired_speed_error=(ego_state.speed - desired_speed),
+            # lead_speed=lead_speed,
+            # lead_accel=lead_accel,
             # ttc=ttc,
-            # is_lead=is_lead,
+            is_lead=is_lead,
         )
 
     @staticmethod
@@ -206,9 +221,20 @@ class Observation:
         return ttc
 
     def to_np(self):
-        return np.array([getattr(self, field.name) for field in fields(self)]).astype(
-            np.float32
-        )
+        return np.array(
+            [
+                self.relative_station / 40.0,
+                self.relative_speed / 10.0,
+                # self.relative_accel / 2.0,
+                self.ego_speed / 10.0,
+                self.ego_acceleration / 2.0,
+                self.desired_speed_error / 10.0,
+                self.is_lead,
+            ]
+        ).astype(np.float32)
+        # return np.array([getattr(self, field.name) for field in fields(self)]).astype(
+        #     np.float32
+        # )
 
 
 class Reward:
@@ -216,10 +242,12 @@ class Reward:
     class Params:
         speed_weight: float = 0.05
         accel_weight: float = 0.2
-        jerk_weight: float = 0.05
+        jerk_weight: float = 0.02
         clearance_weight: float = 10.0
         collision_weight: float = 10.0
+        stationary_lead_buffer_weight: float = 0.2
         clearance_buffer_m: float = 3.0
+        stationary_lead_buffer_m: float = 8.0
 
     def __init__(self, params: Params):
         self.params = params
@@ -232,6 +260,8 @@ class Reward:
         comfort_cost = comfort_accel_cost + self.params.jerk_weight * action.jerk**2
 
         tracking_cost = self.params.speed_weight * np.abs(obs.desired_speed_error)
+
+        tracking_cost -= 0.1 if np.abs(obs.desired_speed_error) < 0.5 else 0.0
 
         safety_cost = 0
         if self.is_collision(obs, lead_car_model) and obs.relative_speed <= 0:
@@ -250,7 +280,36 @@ class Reward:
                 * (obs.relative_station - self.params.clearance_buffer_m) ** 2
             )
 
-        return -comfort_cost - tracking_cost - safety_cost - clearance_cost
+        # stationary_lead_buffer_cost = 0
+        # if (
+        #     obs.relative_speed == 0.0
+        #     and obs.ego_speed == 0.0
+        #     and obs.relative_station >= self.params.stationary_lead_buffer_m
+        #     and not isinstance(lead_car_model, NoLeadModel)
+        # ):
+        #     stationary_lead_buffer_cost = self.params.stationary_lead_buffer_weight * (
+        #         obs.relative_station - self.params.stationary_lead_buffer_m
+        #     )
+
+        stationary_lead_buffer_reward = 0
+        if (
+            obs.relative_speed + obs.ego_speed <= 1e-3
+            and obs.relative_station <= self.params.stationary_lead_buffer_m
+            and obs.relative_station >= self.params.clearance_buffer_m
+            and not isinstance(lead_car_model, NoLeadModel)
+        ):
+            stationary_lead_buffer_reward = self.params.speed_weight * (
+                -obs.desired_speed_error - obs.ego_speed
+            )
+
+        return (
+            -comfort_cost
+            - tracking_cost
+            - safety_cost
+            - clearance_cost
+            + stationary_lead_buffer_reward
+            # - stationary_lead_buffer_cost
+        ) / 30.0
 
     def is_collision(self, obs: Observation, lead_car_model: LeadCarModel):
         return obs.relative_station <= 0.0 and not isinstance(
@@ -327,7 +386,7 @@ class ACCEnv(gym.Env):
 
     @dataclass
     class Params:
-        dt: float = 0.5
+        dt: float = 0.25
         max_time: float = 30.0
         min_jerk: float = -10.0
         max_jerk: float = 10.0
@@ -367,6 +426,7 @@ class ACCEnv(gym.Env):
         self.reward_plot_idx = 4
         self.headway_time_plot_idx = 5
         self.ttc_plot_idx = 6
+        self.rel_station_plot_idx = 7
 
         self.fig, self.axs = plt.subplots(nrows=2, ncols=4, figsize=(20, 10))
         plt.subplots_adjust(
@@ -389,6 +449,7 @@ class ACCEnv(gym.Env):
         self.axs[self.reward_plot_idx].set_ylabel("Reward")
         self.axs[self.headway_time_plot_idx].set_ylabel("Following Time [s]")
         self.axs[self.ttc_plot_idx].set_ylabel("TTC [s]")
+        self.axs[self.rel_station_plot_idx].set_ylabel("Relative Station [m]")
 
         self.axs[self.speed_plot_idx].axhline(
             y=self.params.desired_speed,
@@ -430,6 +491,13 @@ class ACCEnv(gym.Env):
                     if state.speed != 0
                     else np.nan
                 )
+                for state, lead_state in zip(self.state_array, self.lead_state_array)
+            ],
+        )
+        self.lines[self.rel_station_plot_idx]["ego"].set_data(
+            self.state_time_array,
+            [
+                (lead_state.station - state.station)
                 for state, lead_state in zip(self.state_array, self.lead_state_array)
             ],
         )
@@ -563,15 +631,13 @@ class ACCEnv(gym.Env):
 
         if scenario_option_probabilities is None:
             scenario_option_probabilities = ScenarioOptionProbabilities(
-                decel=0.70,
-                const_speed_lead=0.15,
+                decel=0.50,
+                const_speed_lead=0.2,
                 stationary_lead=0.05,
-                no_lead=0.07,
-                no_lead_from_standstill=0.03,
+                no_lead=0.2,
+                no_lead_from_standstill=0.05,
             )
-            # scenario_option_probabilities = ScenarioOptionProbabilities(
-            #     no_lead_from_standstill=1.0
-            # )
+            # scenario_option_probabilities = ScenarioOptionProbabilities(no_lead=1.0)
 
         scenario_choice = scenario_option_probabilities.sample_scenario()
 
@@ -678,12 +744,12 @@ if __name__ == "__main__":
 
     lead_car_model = DecelLeadModel(
         LeadCarModel.Params(dt=env.params.dt),
-        init_state=LeadState(station=10.0, speed=5.0),
+        init_state=LeadState(station=15.0, speed=0.0),
         decel_params=DecelLeadModel.DecelParams(
-            time_accel_start=0.0, accel=-1.0, accel_duration=np.inf
+            time_accel_start=0.0, accel=0.0, accel_duration=np.inf
         ),
     )
-    lead_car_model = NoLeadModel()
+    # lead_car_model = NoLeadModel()
     obs, _ = env.reset(
         ego_init_state=State(station=0, speed=0.0, acceleration=0.0),
         lead_car_model=lead_car_model,
