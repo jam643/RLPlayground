@@ -23,24 +23,26 @@ os.makedirs(logdir, exist_ok=True)
 # Instantiate the env
 vec_env = make_vec_env(
     PathEnv,
-    n_envs=8,
+    n_envs=4,
     env_kwargs={"render_mode": "none"},
 )
 
-device = torch.device("cuda")
+device = torch.device("cpu")
 
 # Train the agent
 model = PPO(
     "MlpPolicy",
     vec_env,
     verbose=1,
+    n_steps=2046 * 8,
+    batch_size=64 * 4,
     device=device,
     tensorboard_log=logdir,
 )
 
 TIMESTEPS = 10000
 iters = 0
-while iters < 60:
+while iters < 35:
     iters += 1
     print("iter")
     print(iters)

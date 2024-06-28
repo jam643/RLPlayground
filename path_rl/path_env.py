@@ -22,12 +22,12 @@ class State:
     path_index: int
     lateral_dev: float
     local_heading: float
-    steering_curvature: float
+    steering_angle: float
 
 
 @dataclass
 class Action:
-    steering_curvature_change: float
+    steering_angle_change: float
 
 
 def car_polygon(x, y, heading, length=5.0, width=2.0):
@@ -70,18 +70,24 @@ def car_polygon(x, y, heading, length=5.0, width=2.0):
 
 
 def motion_model(
-        state: State, action: Action, max_steering_curvature: float, path: np.ndarray, ds: float
+        state: State, action: Action, max_steering_angle: float, l_r: float, l_f: float, path: np.ndarray, ds: float
 ) -> State:
-    steering_curvature = state.steering_curvature + action.steering_curvature_change * ds
-    steering_curvature = np.clip(steering_curvature, -max_steering_curvature, max_steering_curvature)
+    beta = np.arctan2(l_r * np.tan(state.steering_angle), (l_r + l_f))
+
     path_curvature = path[state.path_index, 3]
     path_length_per_ds = (1 - state.lateral_dev * path_curvature) / np.cos(state.local_heading)
-    local_heading = state.local_heading + steering_curvature * ds * path_length_per_ds - path_curvature * ds
-    lateral_dev = state.lateral_dev + np.sin(local_heading) * path_length_per_ds
+    lateral_dev = state.lateral_dev + np.sin(state.local_heading + beta) * path_length_per_ds
+
+    kinematic_curvature = np.sin(beta) / l_r
+    local_heading = state.local_heading + kinematic_curvature * ds * path_length_per_ds - path_curvature * ds
+
+    steering_angle = state.steering_angle + action.steering_angle_change * ds
+    steering_angle = np.clip(steering_angle, -max_steering_angle, max_steering_angle)
+
     path_index = state.path_index + 1
 
     return State(path_index=path_index, lateral_dev=lateral_dev, local_heading=local_heading,
-                 steering_curvature=steering_curvature)
+                 steering_angle=steering_angle)
 
 
 def mean_pooling_1d(arr, pool_size):
@@ -101,8 +107,9 @@ def mean_pooling_1d(arr, pool_size):
 class Observation:
     lateral_dev: float
     local_heading: float
-    steering_curvature: float
+    steering_angle: float
     curvature_lookahead: np.ndarray
+    max_lateral_dev: float
 
     @staticmethod
     def build(state: State, path: np.ndarray, max_lateral_dev: float, N_lookahead: int, N_lookahead_scale: int):
@@ -113,16 +120,17 @@ class Observation:
         return Observation(
             lateral_dev=state.lateral_dev,
             local_heading=state.local_heading,
-            steering_curvature=state.steering_curvature,
-            curvature_lookahead=lookahead
+            steering_angle=state.steering_angle,
+            curvature_lookahead=lookahead,
+            max_lateral_dev=max_lateral_dev
         )
 
     def to_np(self):
         state = np.array(
             [
-                self.lateral_dev / 5.0,
+                self.lateral_dev / self.max_lateral_dev, # normalize observation
                 self.local_heading,
-                self.steering_curvature
+                self.steering_angle
             ]
         )
         full_obs = (np.concatenate([state, self.curvature_lookahead]).astype(np.float32))
@@ -132,26 +140,39 @@ class Observation:
 class Reward:
     @dataclass
     class Params:
-        lateral_acc_weight: float = 200.0
-        curvature_change_weight: float = 20
+        steering_angle_weight: float = 5
+        curvature_change_weight: float = 100
         lateral_dev_weight: float = 0
         survival_reward = 1
-        violation_buffer = 1
+        violation_buffer_start = 2
+        violation_buffer_size = 3
+        violation_cost = 100
 
     def __init__(self, params: Params):
         self.params = params
 
-    def compute_reward(self, obs: Observation, action: Action):
-        curvature_cost = self.params.lateral_acc_weight * obs.steering_curvature ** 2
-        curvature_change_cost = self.params.curvature_change_weight * abs(action.steering_curvature_change)
+    def compute_reward_v2(self, obs: Observation, action: Action):
+        curvature_cost = self.params.steering_angle_weight * obs.steering_angle ** 2
+        curvature_change_cost = self.params.curvature_change_weight * action.steering_angle_change ** 2
         lateral_dev_cost = self.params.lateral_dev_weight * obs.lateral_dev ** 2
         cost = curvature_cost + curvature_change_cost + lateral_dev_cost
 
-        violation_buffer_overshoot = abs(obs.lateral_dev) - 4
+        violation_buffer_overshoot = (abs(obs.lateral_dev) - self.params.violation_buffer_start)/self.params.violation_buffer_size
         violation_multiplier = np.clip(1 - violation_buffer_overshoot, 0, 1)
 
         return violation_multiplier * self.params.survival_reward / (1 + cost)
 
+    def compute_reward(self, obs: Observation, action: Action):
+        curvature_cost = self.params.steering_angle_weight * obs.steering_angle ** 2
+        curvature_change_cost = self.params.curvature_change_weight * action.steering_angle_change ** 2
+        lateral_dev_cost = self.params.lateral_dev_weight * obs.lateral_dev ** 2
+        comfort_cost = curvature_cost + curvature_change_cost + lateral_dev_cost
+
+        violation_buffer_overshoot = (abs(obs.lateral_dev) - self.params.violation_buffer_start)/self.params.violation_buffer_size
+        violation_multiplier = np.clip(violation_buffer_overshoot, 0, 1)
+        lateral_violation_cost = violation_multiplier * self.params.violation_cost
+
+        return self.params.survival_reward - comfort_cost
 
 class PathGenerator(ABC):
     @abstractmethod
@@ -195,13 +216,17 @@ class PathEnv(gym.Env):
         ds: float = 1.0
         N_lookahead: int = 20
         N_lookahead_scale: int = 4
-        max_curvature: float = 0.2
-        max_curvature_change: float = 0.1
-        max_deviation: float = 5
+        max_steering_angle: float = 0.54
+        max_steering_angle_change: float = 0.2
+        l_r: float = 1.3634
+        l_f: float = 1.6366
+        overhang: float = 0.8
+        max_deviation: float = 1.0
         max_deviation_buffer: float = 0.5
         random_state: bool = True
         start_at_beginning: bool = False
         reuse_path: bool = True
+        num_of_incursion_actors_per_side = 2
         max_steps: int = 500
 
     def __init__(self, render_mode="none", save_dir=None, params=Params()):
@@ -246,9 +271,9 @@ class PathEnv(gym.Env):
         steering_curvature: float
         (lat_dev_line,) = self.axs[self.state_plot_2_idx].plot([], [], "k--", label='lateral deviation')
         (local_heading_line,) = self.axs[self.state_plot_2_idx].plot([], [], "r--", label='local heading')
-        (steering_curvature_line,) = self.axs[self.state_plot_idx].plot([], [], "c-", label='steering curvature')
+        (steering_curvature_line,) = self.axs[self.state_plot_idx].plot([], [], "c-", label='steering angle')
         (steering_curvature_change_line,) = self.axs[self.state_plot_idx].plot([], [], "b-",
-                                                                               label='steering curvature change')
+                                                                               label='steering angle change')
         (path_curvature_line,) = self.axs[self.state_plot_idx].plot([], [], "m--", label='path curvature')
         self.axs[self.state_plot_idx].legend()
         self.axs[self.state_plot_2_idx].legend()
@@ -322,7 +347,7 @@ class PathEnv(gym.Env):
             headings = self.path[:, 2]
 
             # Calculate offsets for right and left boundary lines
-            offset = 5
+            offset = 2.5
             right_x = x_positions + offset * np.cos(headings + np.pi / 2)
             right_y = y_positions + offset * np.sin(headings + np.pi / 2)
             left_x = x_positions - offset * np.cos(headings + np.pi / 2)
@@ -375,9 +400,9 @@ class PathEnv(gym.Env):
         self.lines[self.state_plot_2_idx]["local_heading"].set_data(self.state_station_array,
                                                                     [s.local_heading for s in self.state_array])
         self.lines[self.state_plot_idx]["steering_curvature"].set_data(self.state_station_array,
-                                                                       [s.steering_curvature for s in self.state_array])
+                                                                       [s.steering_angle for s in self.state_array])
         self.lines[self.state_plot_idx]["steering_curvature_change"].set_data(self.state_station_array,
-                                                                              [a.steering_curvature_change for a in
+                                                                              [a.steering_angle_change for a in
                                                                                self.action_array])
         self.lines[self.state_plot_idx]["path_curvature"].set_data(self.state_station_array, self.path_curvature_array)
 
@@ -389,7 +414,7 @@ class PathEnv(gym.Env):
 
     def step(self, action):
         # update state
-        action = Action(steering_curvature_change=action[0] * self.params.max_curvature_change)
+        action = Action(steering_angle_change=action[0] * self.params.max_steering_angle_change)
         self.path_curvature_array.append(self.path[self.state.path_index, 3])
 
         self.state = motion_model(
@@ -397,7 +422,9 @@ class PathEnv(gym.Env):
             action=action,
             path=self.path,
             ds=self.params.ds,
-            max_steering_curvature=self.params.max_curvature
+            max_steering_angle=self.params.max_steering_angle,
+            l_r=self.params.l_r,
+            l_f=self.params.l_f
         )
 
         self.station += self.params.ds
@@ -456,7 +483,7 @@ class PathEnv(gym.Env):
                     path_index=np.random.randint(0, self.path.shape[
                         0] - self.params.N_lookahead * self.params.N_lookahead_scale),
                     local_heading=0,
-                    steering_curvature=0
+                    steering_angle=0
                 )
                 if self.params.start_at_beginning:
                     self.state.path_index = 0
@@ -464,11 +491,11 @@ class PathEnv(gym.Env):
                 self.state = State(
                     lateral_dev=0,
                     local_heading=0,
-                    steering_curvature=0,
+                    steering_angle=0,
                     path_index=0
                 )
 
-        self.action_array = [Action(steering_curvature_change=0.0)]
+        self.action_array = [Action(steering_angle_change=0.0)]
         self.state_array = [self.state]
         self.path_curvature_array = [0.0]
         self.state_station_array = [self.station]
@@ -511,16 +538,19 @@ def pid(obs_in: np.ndarray):
     for i in range(9, 0, -1):
         path_curvature = k * path_curvature + (1 - k) * obs_in[3 + i]
 
-    target_local_heading = -0.03 * lateral_dev
-    target_curvature = 0.07 * (target_local_heading - local_heading) + path_curvature
-    return 0.03 * (target_curvature - steering_curvature)
+    target_local_heading = -0.2 * lateral_dev
+    target_curvature = 1.0 * (target_local_heading - local_heading)
+    return 3 * (target_curvature - steering_curvature)
 
 
 if __name__ == "__main__":
-    env = PathEnv(render_mode="human")
-    check_env(env, warn=True)
+    params_for_visualization = PathEnv.Params(reuse_path=False, start_at_beginning=True)
+    env = PathEnv(render_mode="human", params=params_for_visualization)
+    # check_env(env, warn=True)
 
-    obs, _ = env.reset()
+    path_gen_params = DubinsPathGenerator.DubinsPathParams(check_intersection=True, num_way_points=4)
+    path_generator = DubinsPathGenerator(params=path_gen_params)
+
 
     print(env.observation_space)
     print(env.action_space)
@@ -529,10 +559,11 @@ if __name__ == "__main__":
     truncated = False
     terminated = False
     action = 0
-    while truncated is False and terminated is False and plt.get_fignums():
-        obs, reward, terminated, truncated, info = env.step([action])
-        action = pid(obs)
-        print(obs)
-        print(reward)
-        env.render()
-    plt.show()
+    while True:
+        obs, _ = env.reset(path_generator=path_generator)
+        while truncated is False and terminated is False and plt.get_fignums():
+            obs, reward, terminated, truncated, info = env.step([action])
+            action = pid(obs)
+            print(obs)
+            print(reward)
+            env.render()

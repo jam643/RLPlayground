@@ -10,7 +10,7 @@ from scipy.linalg import solve_continuous_are
 import os
 
 model_name = "PPO_path"
-model_steps = "400000"
+model_steps = "350000"
 
 params_for_visualization = PathEnv.Params(reuse_path=False, start_at_beginning=True)
 env_kwargs = {'params': params_for_visualization}
