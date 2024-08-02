@@ -125,7 +125,7 @@ class SimpleRoad:
         # Calculate offsets for right and left boundary lines
         right_x = baseline_x - self.right_width * np.cos(headings + np.pi / 2)
         right_y = baseline_y - self.right_width * np.sin(headings + np.pi / 2)
-        left_x = baseline_x + self.right_width * np.cos(headings + np.pi / 2)
+        left_x = baseline_x + self.left_width * np.cos(headings + np.pi / 2)
         left_y = baseline_y + self.left_width * np.sin(headings + np.pi / 2)
 
         return baseline_x, baseline_y, left_x, left_y, right_x, right_y
@@ -200,9 +200,10 @@ class DubinsRoadGenerator(RoadGenerator):
         num_way_points: int = 4
         min_radius: float = 10
         max_radius: float = 50
-        min_width: float = 1.75
+        max_shift: float = 5
+        min_width: float = 1
         max_width: float = 5
-        position_range: float = 700
+        position_range: float = 100
         check_intersection: bool = False
         intersection_dist: float = 10
         path_ds: float = 1.0
@@ -224,8 +225,17 @@ class DubinsRoadGenerator(RoadGenerator):
                 width = create_lateral_limits(num_points=len(path), min_width=self.params.min_width,
                                               max_width=self.params.max_width)
 
+                left_width_c = width.copy()
+                right_width_c = width.copy()
+
+                offset = create_lateral_limits(num_points=len(path), min_width=-2,
+                                      max_width=2)
+
+                left_width_c += offset
+                right_width_c -= offset
+
                 # note: right now using same width left and right
-                road = SimpleRoad(path_ds=self.params.path_ds, baseline_poses=path, left_width=width, right_width=width)
+                road = SimpleRoad(path_ds=self.params.path_ds, baseline_poses=path, left_width=left_width_c, right_width=right_width_c)
                 return road
 
 

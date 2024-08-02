@@ -276,7 +276,7 @@ class LcEnv(gym.Env):
         max_jerk: float = 1.0
         max_accel: float = 2.0
         min_accel: float = -7.0
-        max_combined_accel: float = 1.0
+        max_combined_accel: float = 8.0
         max_expected_speed: float = 20.0
         max_expected_deviation: float = 2.0
 
@@ -499,10 +499,11 @@ class LcEnv(gym.Env):
 
     def _is_crashed(self):
         left_width, right_width = self.road.get_width_at_station(self.state.station)
+        overrotated = abs(self.state_array[-1].local_heading) > 1.5
         if len(self.derived_state_array) > 0:
             combined_acc_sqr = self.derived_state_array[-1].lateral_acceleration ** 2 + self.state_array[
                 -2].acceleration ** 2
-        return self.state.lateral_dev > left_width or self.state.lateral_dev < -right_width or combined_acc_sqr > self.params.max_combined_accel ** 2
+        return overrotated or self.state.lateral_dev > left_width or self.state.lateral_dev < -right_width or combined_acc_sqr > self.params.max_combined_accel ** 2
 
     def step(self, action):
         # update state
@@ -591,11 +592,14 @@ class LcEnv(gym.Env):
             self.state = ego_init_state
         else:
             if self.params.random_state:
-                max_lateral_dev = 2.0 - self.params.max_deviation_buffer
                 max_speed = 1.0
-                min_lateral_dev = -max_lateral_dev
 
-                station: float
+                station = 0
+                if not self.params.start_at_beginning:
+                    station: float = np.random.rand() * (self.road.get_max_station() - self.params.lookahead_length)
+
+                left_width, right_width = self.road.get_width_at_station(station)
+                mid_point = 0.5 * left_width - 0.5 * right_width
                 lateral_dev: float
                 velocity: float
                 acceleration: float
@@ -603,15 +607,13 @@ class LcEnv(gym.Env):
                 steering_angle: float
 
                 self.state = State(
-                    station=np.random.rand() * (self.road.get_max_station() - self.params.lookahead_length),
-                    lateral_dev=np.random.rand() * (max_lateral_dev - min_lateral_dev) + min_lateral_dev,
+                    station=station,
+                    lateral_dev=mid_point,
                     velocity=np.random.rand() * max_speed,
                     acceleration=0.0,
                     local_heading=0.0,
                     steering_angle=0.0
                 )
-                if self.params.start_at_beginning:
-                    self.state.station = 0.0
             else:
                 self.state = State(
                     station=0.0,
@@ -689,9 +691,11 @@ if __name__ == "__main__":
     print(env.action_space)
     print(env.action_space.sample())
 
+    prob = ScenarioOptionProbabilities(random_roads_no_lead=1.0, straight_road_no_lead=0)
+
     action = np.array([0.0, 0.0])
     while True:
-        obs, _ = env.reset()
+        obs, _ = env.reset(scenario_option_probabilities=prob)
         truncated = False
         terminated = False
         while truncated is False and terminated is False and plt.get_fignums():
