@@ -167,6 +167,31 @@ def eval_policy(
                 ),
             )
 
+    # Come to stop for st constraint
+    stations = np.linspace(75, 150, 4)
+    for station in stations:
+        obs, _ = env.reset(
+            ego_init_state=State(station=0, speed=10.0, acceleration=0),
+            lead_car_model=NoLeadModel(),
+            desired_speed=desired_speed,
+            desired_station=station,
+        )
+        done = False
+        while not done and plt.get_fignums():
+            action, _ = model.predict(obs, deterministic=True)
+            obs, _, terminated, truncated, _ = env.step(action)
+            title = f"Stop for station: {station}"
+            if render_mode == RenderMode.Human:
+                env.render(title=title)
+            done = terminated or truncated
+        if render_mode == RenderMode.Save:
+            env.render(
+                title=title,
+                file_name=os.path.join(
+                    save_dir_name, "stop_station_" + str(station).replace(".", "_")
+                ),
+            )
+
     # Random envs
     for i in range(num_rand_envs):
         obs, _ = env.reset()
