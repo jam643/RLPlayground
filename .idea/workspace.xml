@@ -5,6 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="cbfbcb18-9de3-4a5f-b269-3a3d7d6816c8" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/acc_rl/goal_cost_module.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/acc_rl/acc_env.py" beforeDir="false" afterPath="$PROJECT_DIR$/acc_rl/acc_env.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/acc_rl/eval_policy.py" beforeDir="false" afterPath="$PROJECT_DIR$/acc_rl/eval_policy.py" afterDir="false" />
@@ -14,6 +15,13 @@
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -141,11 +149,6 @@
   <component name="XDebuggerManager">
     <breakpoint-manager>
       <breakpoints>
-        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
-          <url>file://$PROJECT_DIR$/acc_rl/acc_env.py</url>
-          <line>390</line>
-          <option name="timeStamp" value="1" />
-        </line-breakpoint>
         <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
           <url>file://$PROJECT_DIR$/acc_rl/train_model.py</url>
           <option name="timeStamp" value="2" />

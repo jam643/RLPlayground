@@ -196,8 +196,6 @@ def eval_policy(
                     save_dir_name, "stop_station_" + str(station).replace(".", "_")
                 ),
             )
-        if (station - env.state.station) > 5.0:
-            return False
 
     # Random envs
     for i in range(num_rand_envs):
