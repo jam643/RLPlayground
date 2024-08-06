@@ -219,6 +219,8 @@ class Observation:
     # lead_accel: float
     # ttc: float
     is_lead: float
+    # is_goal_constrained: float
+    is_far_from_goal: float
 
     @staticmethod
     def build(
@@ -239,6 +241,7 @@ class Observation:
         # if np.isnan(ttc) or ttc > 10.0:
         #     ttc = 10.0
         is_lead = 1.0
+        is_far_from_goal = 0.0
         if not lead_car_model.does_lead_exist(time):
             relative_station = 80.0
             relative_speed = 0.0
@@ -247,6 +250,14 @@ class Observation:
             # lead_accel = 0.0
             # ttc = 10.0
             is_lead = 0.0
+
+        # If we are (closer to the goal than the lead) AND < 200m from goal, or there is no lead and we are less than
+        # 200 meters from the goal
+        # if (desired_station - ego_state.station) <= 200 and ((lead_car_model.does_lead_exist(time) and (lead_car_model.state.station > desired_station)) or not lead_car_model.does_lead_exist(time)):
+        #     is_goal_constrained = 1.0
+
+        if desired_station - ego_state.station > 200.0:
+            is_far_from_goal = 1.0
 
         # print("Station: {}, goal: {}", ego_state.station, desired_station)
         return Observation(
@@ -261,6 +272,8 @@ class Observation:
             # lead_accel=lead_accel,
             # ttc=ttc,
             is_lead=is_lead,
+            # is_goal_constrained=is_goal_constrained,
+            is_far_from_goal=is_far_from_goal
         )
 
     @staticmethod
@@ -329,6 +342,8 @@ class Observation:
                 self.desired_speed_error / 10.0,
                 self.desired_station_error / 40.0,
                 self.is_lead,
+                # self.is_goal_constrained,
+                self.is_far_from_goal
             ]
         ).astype(np.float32)
         # return np.array([getattr(self, field.name) for field in fields(self)]).astype(
@@ -347,7 +362,7 @@ class Reward:
         stationary_lead_buffer_weight: float = 0.2
         clearance_buffer_m: float = 3.0
         stationary_lead_buffer_m: float = 8.0
-        goal_cost: float = 0.01
+        goal_cost: float = 0.05
 
     def __init__(self, params: Params):
         self.params = params
@@ -370,7 +385,9 @@ class Reward:
                     * obs.relative_speed ** 2
                 # * huber_loss(error=(obs.lead_speed - obs.ego_speed), delta=4) ** 2
             )
-        goal_cost = (obs.desired_station_error * self.params.goal_cost) if obs.desired_station_error > 0 else 0.0
+
+        # Linearly increase if we are positive, negative (reward) if we are between 3 meters away and 0, else nothing
+        goal_cost = (obs.desired_station_error * self.params.goal_cost) if obs.desired_station_error > 0 else (-0.1 if obs.desired_station_error > -3 else 0.0)
         clearance_cost = 0
         if obs.relative_station <= self.params.clearance_buffer_m and lead_car_model.does_lead_exist(time):
             clearance_cost = (
@@ -449,6 +466,7 @@ class ACCEnv(gym.Env):
         speed_limit: float = 20.0
         desired_speed: float = speed_limit
         desired_station: float = 100.0
+        goal_cost = 0.01
 
     def __init__(self, render_mode=RenderMode.Null, params=Params()):
         super().__init__()
@@ -472,6 +490,7 @@ class ACCEnv(gym.Env):
 
         self.lead_car_model = NoLeadModel()
         self.reward_class = Reward(params=Reward.Params())
+        self.reward_class.params.goal_cost = self.params.goal_cost
 
     def _init_fig(self):
         self.station_plot_idx = 0
@@ -700,11 +719,11 @@ class ACCEnv(gym.Env):
 
         if scenario_option_probabilities is None:
             scenario_option_probabilities = ScenarioOptionProbabilities(
-                decel=0.00,
-                const_speed_lead=0.0,
-                stationary_lead=0.0,
-                no_lead=1.0,
-                no_lead_from_standstill=0.00,
+                decel=0.50,
+                const_speed_lead=0.2,
+                stationary_lead=0.05,
+                no_lead=0.2,
+                no_lead_from_standstill=0.05,
             )
             # scenario_option_probabilities = ScenarioOptionProbabilities(no_lead=1.0)
 
@@ -729,7 +748,7 @@ class ACCEnv(gym.Env):
         if desired_station is not None:
             self.params.desired_station = desired_station
         else:
-            self.params.desired_station = np.random.uniform(self.state.station + self.state.speed * 5.0 + 50,
+            self.params.desired_station = np.random.uniform(self.state.station + self.state.speed * 5.0 + 100,
                                                             (self.state.station + 1000))
 
         if lead_car_model is None:

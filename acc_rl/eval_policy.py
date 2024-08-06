@@ -42,6 +42,7 @@ def eval_policy(
                 ),
             ),
             desired_speed=desired_speed,
+            desired_station=2000,
         )
         done = False
         while not done and plt.get_fignums():
@@ -72,6 +73,7 @@ def eval_policy(
                 ),
             ),
             desired_speed=desired_speed,
+            desired_station=2000,
         )
         done = False
         while not done and plt.get_fignums():
@@ -99,6 +101,7 @@ def eval_policy(
                 init_state=LeadState(station=2 * speed, speed=speed),
             ),
             desired_speed=desired_speed,
+            desired_station=2000,
         )
         done = False
         while not done and plt.get_fignums():
@@ -126,6 +129,7 @@ def eval_policy(
                 init_state=LeadState(station=lead_station, speed=0.0),
             ),
             desired_speed=desired_speed,
+            desired_station=2000,
         )
         done = False
         while not done and plt.get_fignums():
@@ -150,6 +154,7 @@ def eval_policy(
             ego_init_state=State(station=0, speed=init_speed, acceleration=0),
             lead_car_model=NoLeadModel(),
             desired_speed=desired_speed,
+            desired_station=2000,
         )
         done = False
         while not done and plt.get_fignums():
@@ -191,6 +196,8 @@ def eval_policy(
                     save_dir_name, "stop_station_" + str(station).replace(".", "_")
                 ),
             )
+        if (station - env.state.station) > 5.0:
+            return False
 
     # Random envs
     for i in range(num_rand_envs):

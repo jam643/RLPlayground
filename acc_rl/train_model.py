@@ -48,7 +48,7 @@ model = PPO(
 
 TIMESTEPS = 100000
 iters = 0
-while iters < 15:
+while iters < 30:
     iters += 1
     model.learn(
         total_timesteps=TIMESTEPS,
@@ -60,9 +60,13 @@ while iters < 15:
     image_iter_dir = os.path.join(image_dir, f"{TIMESTEPS*iters}")
     os.makedirs(image_iter_dir, exist_ok=True)
     params = ACCEnv.Params()
+    # params.goal_cost = iters * .005
     # params.max_time = 20
     env = ACCEnv(render_mode=RenderMode.Save, params=params)
-    eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
+    result = eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
+    if result is False:
+        iters -= 1
+        print("Continuing to train")
 
 
 mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=1000)
