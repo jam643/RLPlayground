@@ -35,6 +35,7 @@ while plt.get_fignums():
     obs, _ = env.reset(path_generator=path_generator)
     done = False
     while not done and plt.get_fignums():
+        obs = np.zeros(23,)
         action, _ = model.predict(obs, deterministic=True)
         obs, _, terminated, truncated, _ = env.step(action)
         env.render(title="Random Env")
