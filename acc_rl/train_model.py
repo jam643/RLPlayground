@@ -1,6 +1,6 @@
 from acc_env import ACCEnv, RenderMode, ScenarioOptionProbabilities
 from eval_policy import eval_policy
-
+import goal_cost_module
 from stable_baselines3 import PPO, A2C, DQN, SAC
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
@@ -8,7 +8,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 import torch
 import os
 import numpy as np
-exp_name = "PPO_acc_run45"
+exp_name = "PPO_acc_run55"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "model_checkpoints", exp_name)
@@ -20,54 +20,65 @@ os.makedirs(image_dir, exist_ok=True)
 os.makedirs(logdir, exist_ok=True)
 
 
+
 # Instantiate the env
-vec_env = make_vec_env(
-    ACCEnv,
-    n_envs=1,
-    env_kwargs={
-        "render_mode": RenderMode.Null,
-    },
-)
+# vec_env = make_vec_env(
+#     ACCEnv,
+#     n_envs=1,
+#     env_kwargs={
+#         "render_mode": RenderMode.Null,
+#     },
+# )
 # vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=False)
 
+accenv = ACCEnv()
 device = torch.device("cpu")
+
+accenv.no_lead_probability = 0.8
+accenv.no_lead_from_standstill_probability = 0.2
 
 # Train the agent
 model = PPO(
     "MlpPolicy",
-    vec_env,
+    accenv,
     verbose=1,
     device=device,
     tensorboard_log=logdir,
-    n_steps=2048 * 32,
-    batch_size=64 * 8,
-    ent_coef=0.01,
+    n_steps=2048 * 512,
+    batch_size=64 * 256,
     policy_kwargs=dict(
-        net_arch=[dict(pi=[128, 128], vf=[128, 128])]  # Adjusted network architecture
+        net_arch=[dict(pi=[32, 32], vf=[32, 32])]  # Adjusted network architecture
     ),
 )
 print(model.policy)
-TIMESTEPS = 100000
+TIMESTEPS = 200000
 iters = 0
-while iters < 30:
-    iters += 1
-    model.learn(
-        total_timesteps=TIMESTEPS,
-        reset_num_timesteps=False,
-        tb_log_name=exp_name,
-        progress_bar=True,
-    )
-    model.save(f"{models_dir}/{TIMESTEPS*iters}")
-    image_iter_dir = os.path.join(image_dir, f"{TIMESTEPS*iters}")
-    os.makedirs(image_iter_dir, exist_ok=True)
-    params = ACCEnv.Params()
-    # params.goal_cost = iters * .005
-    # params.max_time = 20
-    env = ACCEnv(render_mode=RenderMode.Save, params=params)
-    result = eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
+# while iters < 30:
+#     iters += 1
+#     model.learn(
+#         total_timesteps=TIMESTEPS,
+#         reset_num_timesteps=False,
+#         tb_log_name=exp_name,
+#         progress_bar=True,
+#     )
+#     model.save(f"{models_dir}/{TIMESTEPS*iters}")
+#     image_iter_dir = os.path.join(image_dir, f"{TIMESTEPS*iters}")
+#     os.makedirs(image_iter_dir, exist_ok=True)
+#     params = ACCEnv.Params()
+#     # params.goal_cost = iters * .005
+#     # params.max_time = 20
+#     env = ACCEnv(render_mode=RenderMode.Save, params=params)
+#     env.no_lead_probability = 0.8
+#     env.no_lead_from_standstill_probability = 0.2
+#     result = eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
 
-iters = 0
-while iters < 30:
+accenv.decel_probability = 0.5
+accenv.const_speed_lead_probability = 0.2
+accenv.stationary_lead_probability = 0.05
+accenv.no_lead_probability = 0.2
+accenv.no_lead_from_standstill_probability = 0.05
+
+while iters < 6000:
     iters += 1
     model.learn(
         total_timesteps=TIMESTEPS,
@@ -82,6 +93,11 @@ while iters < 30:
     # params.goal_cost = iters * .005
     # params.max_time = 20
     env = ACCEnv(render_mode=RenderMode.Save, params=params)
+    env.decel_probability = 0.5
+    env.const_speed_lead_probability = 0.2
+    env.stationary_lead_probability = 0.05
+    env.no_lead_probability = 0.2
+    env.no_lead_from_standstill_probability = 0.05
     result = eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
 
 

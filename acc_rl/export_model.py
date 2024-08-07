@@ -10,8 +10,8 @@ import os
 
 # Update these with model checkpoint info for tracing
 #############
-model_name = "PPO_ACC_V2"
-model_steps = "900000"
+model_name = "PPO_ACC_run55"
+model_steps = "9600000"
 #############
 
 class OnnxableSB3Policy(th.nn.Module):

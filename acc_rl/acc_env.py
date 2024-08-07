@@ -11,7 +11,7 @@ from scipy import integrate
 from enum import Enum
 from abc import ABC, abstractmethod
 from stable_baselines3.common.env_checker import check_env
-
+import goal_cost_module
 
 class RenderMode(Enum):
     Null = 0
@@ -254,16 +254,16 @@ class Observation:
         # if (desired_station - ego_state.station) <= 200 and ((lead_car_model.does_lead_exist(time) and (lead_car_model.state.station > desired_station)) or not lead_car_model.does_lead_exist(time)):
         #     is_goal_constrained = 1.0
 
-        if desired_station - ego_state.station >= 200.0:
+        if desired_station - ego_state.station >= 400.0:
             is_goal_far = 1.0
 
-        speed_lookahead = []
-        for idx in range(400):
-            # 200 m lookahead
-            if ego_state.station + (idx/2.0) < (desired_station - 0.5):
-                speed_lookahead.append(desired_speed)
-            else:
-                speed_lookahead.append(0)
+        # speed_lookahead = []
+        # for idx in range(400):
+        #     # 200 m lookahead
+        #     if ego_state.station + (idx/2.0) < (desired_station - 0.5):
+        #         speed_lookahead.append(desired_speed)
+        #     else:
+        #         speed_lookahead.append(0)
 
         if ego_state.station >= desired_station:
             desired_speed = 0
@@ -276,7 +276,7 @@ class Observation:
             ego_speed=ego_state.speed,
             ego_acceleration=ego_state.acceleration,
             desired_speed_error=(ego_state.speed - desired_speed),
-            desired_station_error=max(-200.0, ego_state.station - desired_station),
+            desired_station_error=max(-400.0, ego_state.station - desired_station),
             # lead_speed=lead_speed,
             # lead_accel=lead_accel,
             # ttc=ttc,
@@ -373,7 +373,7 @@ class Reward:
         stationary_lead_buffer_weight: float = 0.2
         clearance_buffer_m: float = 3.0
         stationary_lead_buffer_m: float = 8.0
-        goal_cost: float = 0.01
+        goal_cost: float = 0.2
 
     def __init__(self, params: Params):
         self.params = params
@@ -500,6 +500,12 @@ class ACCEnv(gym.Env):
 
         self.lead_car_model = NoLeadModel()
         self.reward_class = Reward(params=Reward.Params())
+        self.scenario_probabilities = ScenarioOptionProbabilities()
+        self.decel_probability = 0.0
+        self.const_speed_lead_probability = 0.0
+        self.stationary_lead_probability = 0.0
+        self.no_lead_probability = 0.0
+        self.no_lead_from_standstill_probability = 0.0
 
     def _init_fig(self):
         self.station_plot_idx = 0
@@ -728,13 +734,11 @@ class ACCEnv(gym.Env):
 
         if scenario_option_probabilities is None:
             scenario_option_probabilities = ScenarioOptionProbabilities(
-                # decel=0.50,
-                # const_speed_lead=0.2,
-                # stationary_lead=0.05,
-                # no_lead=0.2,
-                # no_lead_from_standstill=0.05,
-                no_lead=0.8,
-                no_lead_from_standstill=0.2,
+                decel=self.decel_probability,
+                const_speed_lead=self.const_speed_lead_probability,
+                stationary_lead=self.stationary_lead_probability,
+                no_lead=self.no_lead_probability,
+                no_lead_from_standstill=self.no_lead_from_standstill_probability,
             )
             # scenario_option_probabilities = ScenarioOptionProbabilities(no_lead=1.0)
 
