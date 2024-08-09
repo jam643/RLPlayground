@@ -230,7 +230,7 @@ class Observation:
             lead_car_model: LeadCarModel,
             time: float,
     ):
-        relative_station = lead_state.station - ego_state.station
+        relative_station = min(200.0, lead_state.station - ego_state.station)
         lead_speed = lead_state.speed
         relative_accel = lead_action.acceleration - ego_state.acceleration
         relative_speed = lead_state.speed - ego_state.speed
@@ -254,7 +254,7 @@ class Observation:
         # if (desired_station - ego_state.station) <= 200 and ((lead_car_model.does_lead_exist(time) and (lead_car_model.state.station > desired_station)) or not lead_car_model.does_lead_exist(time)):
         #     is_goal_constrained = 1.0
 
-        if desired_station - ego_state.station >= 400.0:
+        if desired_station - ego_state.station >= 200.0:
             is_goal_far = 1.0
 
         # speed_lookahead = []
@@ -276,7 +276,7 @@ class Observation:
             ego_speed=ego_state.speed,
             ego_acceleration=ego_state.acceleration,
             desired_speed_error=(ego_state.speed - desired_speed),
-            desired_station_error=max(-400.0, ego_state.station - desired_station),
+            desired_station_error=max(-200.0, ego_state.station - desired_station),
             # lead_speed=lead_speed,
             # lead_accel=lead_accel,
             # ttc=ttc,
@@ -365,9 +365,9 @@ class Observation:
 class Reward:
     @dataclass
     class Params:
-        speed_weight: float = 0.05
-        accel_weight: float = 0.2
-        jerk_weight: float = 0.02
+        speed_weight: float = 0.07
+        accel_weight: float = 0.1
+        jerk_weight: float = 0.01
         clearance_weight: float = 10.0
         collision_weight: float = 10.0
         stationary_lead_buffer_weight: float = 0.2
@@ -763,8 +763,8 @@ class ACCEnv(gym.Env):
         if desired_station is not None:
             self.params.desired_station = desired_station
         else:
-            self.params.desired_station = np.random.uniform(self.state.station + self.state.speed * 5.0 + 50,
-                                                            (self.state.station + 600))
+            self.params.desired_station = np.random.uniform(self.state.station + self.state.speed * 3 + 25,
+                                                            (self.state.station + 400))
 
         if lead_car_model is None:
             lead_init_state = LeadState(

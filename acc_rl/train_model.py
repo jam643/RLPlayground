@@ -8,7 +8,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 import torch
 import os
 import numpy as np
-exp_name = "PPO_acc_run55"
+exp_name = "PPO_acc_run73"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "model_checkpoints", exp_name)
@@ -44,10 +44,10 @@ model = PPO(
     verbose=1,
     device=device,
     tensorboard_log=logdir,
-    n_steps=2048 * 512,
-    batch_size=64 * 256,
+    n_steps=2048 * 1024,
+    batch_size=64 * 512,
     policy_kwargs=dict(
-        net_arch=[dict(pi=[32, 32], vf=[32, 32])]  # Adjusted network architecture
+        net_arch=[dict(pi=[64, 64], vf=[64, 64])]  # Adjusted network architecture
     ),
 )
 print(model.policy)
@@ -72,11 +72,11 @@ iters = 0
 #     env.no_lead_from_standstill_probability = 0.2
 #     result = eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
 
-accenv.decel_probability = 0.5
+accenv.decel_probability = 0.3
 accenv.const_speed_lead_probability = 0.2
-accenv.stationary_lead_probability = 0.05
+accenv.stationary_lead_probability = 0.1
 accenv.no_lead_probability = 0.2
-accenv.no_lead_from_standstill_probability = 0.05
+accenv.no_lead_from_standstill_probability = 0.2
 
 while iters < 6000:
     iters += 1
@@ -93,11 +93,11 @@ while iters < 6000:
     # params.goal_cost = iters * .005
     # params.max_time = 20
     env = ACCEnv(render_mode=RenderMode.Save, params=params)
-    env.decel_probability = 0.5
+    env.decel_probability = 0.3
     env.const_speed_lead_probability = 0.2
-    env.stationary_lead_probability = 0.05
+    env.stationary_lead_probability = 0.1
     env.no_lead_probability = 0.2
-    env.no_lead_from_standstill_probability = 0.05
+    env.no_lead_from_standstill_probability = 0.2
     result = eval_policy(model, env, RenderMode.Save, image_iter_dir, 0)
 
 
