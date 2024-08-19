@@ -8,7 +8,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 import torch
 import os
 import numpy as np
-exp_name = "PPO_acc_run73"
+exp_name = "PPO_acc_run75"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "model_checkpoints", exp_name)

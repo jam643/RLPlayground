@@ -7,6 +7,7 @@
     <list default="true" id="cbfbcb18-9de3-4a5f-b269-3a3d7d6816c8" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/acc_rl/acc_env.py" beforeDir="false" afterPath="$PROJECT_DIR$/acc_rl/acc_env.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/acc_rl/export_model.py" beforeDir="false" afterPath="$PROJECT_DIR$/acc_rl/export_model.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/acc_rl/train_model.py" beforeDir="false" afterPath="$PROJECT_DIR$/acc_rl/train_model.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -51,7 +52,7 @@
       <recent name="$PROJECT_DIR$/acc_rl/traced_models" />
     </key>
   </component>
-  <component name="RunManager" selected="Python.export_model">
+  <component name="RunManager" selected="Python.train_model">
     <configuration name="Unnamed" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="RLLibPlayground" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -122,8 +123,8 @@
     </list>
     <recent_temporary>
       <list>
-        <item itemvalue="Python.export_model" />
         <item itemvalue="Python.train_model" />
+        <item itemvalue="Python.export_model" />
       </list>
     </recent_temporary>
   </component>

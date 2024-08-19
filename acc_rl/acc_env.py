@@ -366,8 +366,8 @@ class Reward:
     @dataclass
     class Params:
         speed_weight: float = 0.07
-        accel_weight: float = 0.1
-        jerk_weight: float = 0.01
+        accel_weight: float = 0.15
+        jerk_weight: float = 0.02
         clearance_weight: float = 10.0
         collision_weight: float = 10.0
         stationary_lead_buffer_weight: float = 0.2
@@ -381,7 +381,7 @@ class Reward:
     def compute_reward(
             self, obs: Observation, action: Action, lead_car_model: LeadCarModel, time: float
     ):
-        comfort_accel_cost = self.params.accel_weight * obs.ego_acceleration ** 2
+        comfort_accel_cost = self.params.accel_weight * obs.ego_acceleration ** 2 if obs.ego_acceleration < 0 else 2 * self.params.accel_weight * obs.ego_acceleration ** 2
 
         comfort_cost = comfort_accel_cost + self.params.jerk_weight * action.jerk ** 2
 
@@ -397,7 +397,6 @@ class Reward:
                 # * huber_loss(error=(obs.lead_speed - obs.ego_speed), delta=4) ** 2
             )
 
-        # Linearly increase if we are positive, negative (reward) if we are between 3 meters away and 0, else nothing
         goal_cost = (obs.desired_station_error * self.params.goal_cost) if obs.desired_station_error > 0 else 0.0
         clearance_cost = 0
         if obs.relative_station <= self.params.clearance_buffer_m and lead_car_model.does_lead_exist(time):
