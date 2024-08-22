@@ -13,7 +13,7 @@ exp_name = f"PPO_double_integrator_10mps"
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(base_dir, "models", exp_name)
-image_dir = os.path.join(base_dir, "image", exp_name)
+image_dir = os.path.join(base_dir, "eval_images", exp_name)
 logdir = os.path.join(base_dir, "logs")
 
 os.makedirs(models_dir, exist_ok=True)
